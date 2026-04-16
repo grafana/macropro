@@ -1,3 +1,3 @@
 module github.com/grafana/macropro
 
-go 1.26.1
+go 1.23
