@@ -2,6 +2,7 @@ package macropro
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -288,6 +289,123 @@ func TestParseArgs_quotedComma(t *testing.T) {
 	}
 	if len(args) != 2 || args[0] != `'a,b'` || args[1] != "c" {
 		t.Errorf("got %v", args)
+	}
+}
+
+func TestInterpolate_withPrefix_fluxStyle(t *testing.T) {
+	// Flux uses "v." as its macro prefix, e.g. v.timeRangeStart, v.bucket.
+	macros := MacroMap[struct{}]{
+		"timeRangeStart": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return "2024-01-01T00:00:00Z", nil
+		},
+		"bucket": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return `"grafana"`, nil
+		},
+	}
+	query := `from(bucket: v.bucket) |> range(start: v.timeRangeStart)`
+	got, err := Interpolate(query, macros, QueryContext[struct{}]{}, WithPrefix("v."))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `from(bucket: "grafana") |> range(start: 2024-01-01T00:00:00Z)`
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestInterpolate_withPrefix_influxqlLegacy(t *testing.T) {
+	// InfluxQL has legacy bare-$ macros like $timeFilter and $interval.
+	macros := MacroMap[struct{}]{
+		"timeFilter": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return "time >= 1000ms and time <= 2000ms", nil
+		},
+		"interval": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return "5s", nil
+		},
+	}
+	query := `SELECT mean(value) FROM cpu WHERE $timeFilter GROUP BY time($interval)`
+	got, err := Interpolate(query, macros, QueryContext[struct{}]{}, WithPrefix("$"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `SELECT mean(value) FROM cpu WHERE time >= 1000ms and time <= 2000ms GROUP BY time(5s)`
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestInterpolate_withPrefix_doesNotStripSQLComments(t *testing.T) {
+	// When a non-SQL prefix is in use, it's common to also swap comment
+	// handling. Here we verify that WithComments(0) disables auto-stripping.
+	expanded := false
+	macros := MacroMap[struct{}]{
+		"foo": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			expanded = true
+			return "BAR", nil
+		},
+	}
+	// -- is NOT a comment in Flux; with WithComments(0) the content after --
+	// must survive and the macro inside it must expand.
+	query := `from(bucket: "b") -- v.foo`
+	got, err := Interpolate(query, macros, QueryContext[struct{}]{}, WithPrefix("v."), WithComments(0))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !expanded {
+		t.Error("macro should have been expanded when comment stripping is disabled")
+	}
+	want := `from(bucket: "b") -- BAR`
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestInterpolate_withComments_slashStripping(t *testing.T) {
+	// Flux uses // for line comments. A macro placed after // should not expand.
+	expanded := false
+	macros := MacroMap[struct{}]{
+		"bucket": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			expanded = true
+			return `"secret"`, nil
+		},
+	}
+	query := `from(bucket: "b") // v.bucket`
+	_, err := Interpolate(query, macros, QueryContext[struct{}]{}, WithPrefix("v."), WithComments(SlashComment|BlockComment))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if expanded {
+		t.Error("macro inside // comment should not have been expanded")
+	}
+}
+
+func TestInterpolate_withPrefix_defaultStillWorks(t *testing.T) {
+	// When no options are passed, the default "$__" prefix must still work.
+	macros := MacroMap[struct{}]{
+		"foo": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return "BAR", nil
+		},
+	}
+	got, err := Interpolate("$__foo", macros, QueryContext[struct{}]{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "BAR" {
+		t.Errorf("default prefix should still be $__; got %q", got)
+	}
+}
+
+func TestStripComments_slash(t *testing.T) {
+	input := "SELECT * // this is a comment\nFROM t"
+	got := StripComments(input, SlashComment)
+	// StripComments is length-preserving: the // comment region is replaced
+	// with spaces so line/column positions remain accurate.
+	want := "SELECT * " + strings.Repeat(" ", len("// this is a comment")) + "\nFROM t"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if len(got) != len(input) {
+		t.Errorf("StripComments should be length-preserving; got len %d, want %d", len(got), len(input))
 	}
 }
 

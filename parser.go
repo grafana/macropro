@@ -19,19 +19,31 @@ import (
 // never evaluated. Callers that also need MySQL-style hash comment stripping
 // (#) should call [StripComments] with [HashComment] before calling Interpolate.
 //
+// The default "$__" prefix and SQL comment styles can be overridden via
+// [WithPrefix] and [WithComments] — useful for non-SQL query languages like
+// InfluxDB Flux or for datasources with legacy macro syntaxes.
+//
 // Tokens whose names do not appear in macros are left unchanged. The first
 // handler error is returned immediately; the original query string is
 // returned alongside the error.
-func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T]) (string, error) {
+func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], opts ...Option) (string, error) {
 	if len(macros) == 0 {
 		return query, nil
 	}
 
-	// Strip SQL comments before macro expansion so that tokens inside comment
+	// Resolve options. Defaults: "$__" prefix, strip -- and /* */ comments.
+	o := options{prefix: "$__", comments: LineComment | BlockComment}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	// Strip comments before macro expansion so that tokens inside comment
 	// regions are never evaluated. This closes the attack vector where a macro
 	// hidden behind a -- or /* */ comment still triggers side effects (e.g.
 	// fill-mode activation leading to OOM via ResampleWideFrame).
-	query = StripComments(query, LineComment|BlockComment)
+	if o.comments != 0 {
+		query = StripComments(query, o.comments)
+	}
 
 	// Build a sorted list of names, longest first, to prevent prefix collisions.
 	names := make([]string, 0, len(macros))
@@ -48,7 +60,7 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T]) (
 	result := query
 	for _, name := range names {
 		fn := macros[name]
-		token := "$__" + name
+		token := o.prefix + name
 
 		var replaceErr error
 		result = replaceAllMacro(result, token, func(raw string) string {

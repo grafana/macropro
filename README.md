@@ -173,10 +173,12 @@ These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnos
 
 ## Comment stripping
 
-To prevent macros inside SQL comments from being expanded, strip comments before calling `Interpolate`. `StripComments` is length-preserving — comment regions are replaced with spaces so that line/column positions in error messages remain accurate.
+`Interpolate` automatically strips standard SQL line comments (`--`) and block comments (`/* */`) before expanding macros, so macro tokens hidden inside comments are never evaluated. For finer control — disabling stripping, stripping MySQL-style hash comments, or Flux-style `//` — pass [`WithComments`](#options) (see below).
+
+You can also call `StripComments` directly. It is length-preserving: comment regions are replaced with spaces so line/column positions in error messages remain accurate.
 
 ```go
-clean := macropro.StripComments(query, macropro.LineComment|macropro.BlockComment)
+clean := macropro.StripComments(query, macropro.HashComment)
 result, err := macropro.Interpolate(clean, macros, ctx)
 ```
 
@@ -187,17 +189,53 @@ Available `CommentStyle` flags:
 | `LineComment` | `-- …` until end of line |
 | `BlockComment` | `/* … */` |
 | `HashComment` | `# …` until end of line (MySQL-style) |
+| `SlashComment` | `// …` until end of line (Flux-style) |
 | `DollarQuote` | Preserves PostgreSQL `$tag$…$tag$` dollar-quoted strings |
 
 Flags can be combined with `\|`. Pass `0` to strip nothing.
 
+## Options
+
+Both the default `$__` prefix and the default comment-stripping set can be overridden per-call via functional options. This is essential for query languages that don't follow Grafana SQL conventions.
+
+```go
+// Flux uses "v." as its variable prefix and "//" for line comments.
+result, err := macropro.Interpolate(query, fluxMacros, ctx,
+    macropro.WithPrefix("v."),
+    macropro.WithComments(macropro.SlashComment|macropro.BlockComment),
+)
+
+// Legacy InfluxQL bare "$" macros (e.g. $timeFilter, $interval):
+result, err := macropro.Interpolate(query, legacyMacros, ctx,
+    macropro.WithPrefix("$"),
+)
+```
+
+Available options:
+
+| Option | Purpose | Default |
+|---|---|---|
+| `WithPrefix(string)` | Macro prefix to scan for | `"$__"` |
+| `WithComments(CommentStyle)` | Comment styles auto-stripped before expansion; `0` disables | `LineComment\|BlockComment` |
+
+If your query language uses more than one prefix family in the same query (as InfluxDB Flux does, with both `$__interval` and `v.timeRangeStart`), call `Interpolate` multiple times with different prefixes. Each call operates on the output of the previous one.
+
 ## API reference
 
 ```go
-// Interpolate replaces all recognised $__ macros in query.
-// Unknown macros are left unchanged.
-// Returns the first handler error encountered, with the macro name included.
-func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T]) (string, error)
+// Interpolate replaces all recognised <prefix><name> macros in query.
+// Unknown macros are left unchanged. By default, the prefix is "$__" and
+// standard SQL comments are stripped. Use WithPrefix / WithComments to
+// override. Returns the first handler error encountered, with the macro
+// name included.
+func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], opts ...Option) (string, error)
+
+// WithPrefix overrides the macro prefix used when scanning. Default "$__".
+func WithPrefix(prefix string) Option
+
+// WithComments overrides the set of comment styles auto-stripped before
+// expansion. Default LineComment|BlockComment. Pass 0 to disable stripping.
+func WithComments(style CommentStyle) Option
 
 // MergeMacros returns a new MacroMap with overrides merged on top of base.
 // For identical names, the override wins. The base map is not mutated.
@@ -207,7 +245,7 @@ func MergeMacros[T any](base, overrides MacroMap[T]) MacroMap[T]
 // generic SQL implementations.
 func DefaultMacros[T any]() MacroMap[T]
 
-// StripComments removes SQL comment regions from query, replacing them with
+// StripComments removes comment regions from query, replacing them with
 // spaces to preserve byte positions.
 func StripComments(query string, style CommentStyle) string
 ```

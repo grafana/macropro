@@ -105,6 +105,17 @@ func StripComments(query string, style CommentStyle) string {
 			continue
 		}
 
+		// Slash line comments: // …\n  (Flux-style)
+		if style&SlashComment != 0 && i+1 < len(query) && query[i] == '/' && query[i+1] == '/' {
+			j := i
+			for j < len(query) && query[j] != '\n' {
+				j++
+			}
+			writeSpaces(&b, j-i)
+			i = j
+			continue
+		}
+
 		// Hash comments: # …\n  (MySQL-style)
 		if style&HashComment != 0 && query[i] == '#' {
 			j := i

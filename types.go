@@ -53,4 +53,33 @@ const (
 	// DollarQuote preserves PostgreSQL $tag$…$tag$ dollar-quoted string
 	// literals so they are not mistaken for macro tokens.
 	DollarQuote
+	// SlashComment strips // line comments (Flux-style).
+	SlashComment
 )
+
+// Option configures the behaviour of [Interpolate]. Options are applied in
+// order and the last one wins for conflicting settings.
+type Option func(*options)
+
+// options is the resolved configuration for a single Interpolate call.
+type options struct {
+	prefix   string
+	comments CommentStyle
+}
+
+// WithPrefix overrides the macro prefix used when scanning the query. The
+// default is "$__". Non-SQL query languages may need a different prefix — for
+// example, InfluxDB Flux uses "v." (as in v.timeRangeStart) and legacy
+// InfluxQL uses bare "$" (as in $timeFilter).
+func WithPrefix(prefix string) Option {
+	return func(o *options) { o.prefix = prefix }
+}
+
+// WithComments overrides the set of comment styles that [Interpolate]
+// automatically strips from the query before macro expansion. The default is
+// LineComment|BlockComment, matching standard SQL. Pass 0 to disable
+// auto-stripping, or a different bitmask (e.g. SlashComment|BlockComment for
+// Flux) to customise it.
+func WithComments(style CommentStyle) Option {
+	return func(o *options) { o.comments = style }
+}
