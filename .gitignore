@@ -1,0 +1,30 @@
+# Binaries and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go build cache and module download cache
+/vendor/
+
+# Coverage output
+coverage.txt
+coverage.html
+*.coverprofile
+
+# IDE / editor directories
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Environment files
+.env
+.env.*
