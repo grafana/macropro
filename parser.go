@@ -72,7 +72,7 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 				replaceErr = fmt.Errorf("macro %s: %w", token, err)
 				return raw
 			}
-			replacement, err := fn(ctx, args)
+			replacement, err := callHandler(fn, ctx, args)
 			if err != nil {
 				replaceErr = fmt.Errorf("macro %s(%s): %w", token, strings.Join(args, ", "), err)
 				return raw
@@ -216,6 +216,20 @@ func parseArgs(raw string) ([]string, error) {
 // escapes — MySQL and a handful of other dialects accept \' and \", but the
 // SQL standard does not. Callers relying on backslash escapes should
 // pre-sanitise or disable comment stripping via [WithComments](0).
+// callHandler invokes fn(ctx, args) with a deferred recover so that a panic
+// inside a MacroFunc is converted to an error rather than propagating out of
+// [Interpolate]. A handler is arbitrary user code and the library treats it
+// as a trust boundary — a single buggy or malicious handler should not be
+// able to crash the caller.
+func callHandler[T any](fn MacroFunc[T], ctx QueryContext[T], args []string) (result string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("handler panicked: %v", r)
+		}
+	}()
+	return fn(ctx, args)
+}
+
 // scanToLineEnd returns the index of the first line terminator at or after
 // start in s, or len(s) if none is found. Both \n and \r are recognised, so
 // classic-Mac \r-only line endings terminate line comments correctly without

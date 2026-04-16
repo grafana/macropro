@@ -568,6 +568,67 @@ func TestStripComments_lineCommentAtEOF(t *testing.T) {
 	}
 }
 
+func TestInterpolate_handlerPanic(t *testing.T) {
+	// A handler that panics should not take down the caller. Interpolate
+	// must return an error and the (stripped) query.
+	macros := MacroMap[struct{}]{
+		"boom": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			panic("explicit panic")
+		},
+	}
+	_, err := Interpolate("SELECT $__boom FROM t", macros, QueryContext[struct{}]{})
+	if err == nil {
+		t.Fatal("expected error from panicking handler, got nil")
+	}
+	if !strings.Contains(err.Error(), "panicked") {
+		t.Errorf("error should mention panic; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "$__boom") {
+		t.Errorf("error should include macro name; got %v", err)
+	}
+}
+
+func TestInterpolate_handlerNilDeref(t *testing.T) {
+	// Runtime panics (nil deref, slice out-of-range) must also be recovered,
+	// not just explicit panic() calls.
+	macros := MacroMap[struct{}]{
+		"bad": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			var p *string
+			return *p, nil
+		},
+	}
+	_, err := Interpolate("$__bad", macros, QueryContext[struct{}]{})
+	if err == nil {
+		t.Fatal("expected error from nil-deref in handler, got nil")
+	}
+	if !strings.Contains(err.Error(), "panicked") {
+		t.Errorf("error should mention panic; got %v", err)
+	}
+}
+
+func TestInterpolate_handlerPanicStopsFurtherExpansion(t *testing.T) {
+	// When one handler panics, Interpolate returns immediately; subsequent
+	// macro names must not be processed (same semantics as a handler error).
+	// Names are sorted longest-first, so "panicker" runs before "short".
+	shortCalled := false
+	macros := MacroMap[struct{}]{
+		"panicker": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			panic("nope")
+		},
+		"short": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			shortCalled = true
+			return "OK", nil
+		},
+	}
+	_, err := Interpolate("$__panicker $__short", macros, QueryContext[struct{}]{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if shortCalled {
+		t.Error("later handler should not have been called after panic")
+	}
+}
+
 // ---- helpers ----
 
 func mustTime(s string) time.Time {
