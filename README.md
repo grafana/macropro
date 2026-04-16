@@ -278,6 +278,48 @@ type MacroMap[T any] map[string]MacroFunc[T]
 - **Error safety**: if a handler returns an error, `Interpolate` returns the original unmodified query alongside the error.
 - **No SQL assumptions**: the parser works on any string; only the default macro implementations produce SQL.
 
+## Security considerations
+
+`macropro` is a string-templating engine. It has no notion of SQL syntax, no notion of identifiers vs. literals, and it does not escape anything. Treat it accordingly.
+
+### Macro arguments are spliced, not escaped
+
+The built-in handlers interpolate arguments directly into their output:
+
+```go
+// $__timeFilter(col) expands to:
+//   col >= 'from' AND col <= 'to'
+return fmt.Sprintf("%s >= '%s' AND %s <= '%s'", col, from, col, to), nil
+```
+
+There is no quoting, no identifier validation, and no type checking. If the string passed as `col` contains SQL syntax, that syntax ends up in the final query. The same applies to every custom handler you write — the output string is a raw fragment spliced into the query.
+
+### Trust model
+
+`Interpolate` is safe only if **the query template and macro arguments originate from a trusted author** (typically the dashboard editor). A concrete way to think about it: the strings you pass to `Interpolate` are code, not data.
+
+The library is **not** safe if you:
+
+- Concatenate template-variable values, HTTP parameters, or any other untrusted input into the query string before calling `Interpolate`. The attacker can trivially close a macro argument and inject arbitrary SQL — this is plain SQL injection, not a macropro bug, but the macro layer does nothing to mitigate it.
+- Populate `QueryContext.Table`, `QueryContext.Column`, or any `Extra` field used by a handler from unsanitised input. These values are spliced into output with no escaping.
+- Accept arbitrary macro definitions from untrusted code. A malicious `MacroFunc` has full control over the rewritten query string.
+
+### Responsibilities by layer
+
+| Layer | Must do |
+|---|---|
+| Caller of `Interpolate` | Sanitise any untrusted input **before** it reaches the query string or `QueryContext`. Use parameterised queries at the driver level where possible. |
+| Handler author | Quote, escape, or validate arguments as required by the target dialect. If an argument is expected to be an identifier, reject or quote non-identifier input. |
+| Library | Parse `$__name(args)` tokens correctly, strip comments so hidden macros don't execute, sort longest-name-first, terminate. Nothing else. |
+
+### Known parser limitations
+
+These are **not** security boundaries, but are worth understanding when reasoning about what the parser treats as a macro vs. what it leaves alone:
+
+- Quote tracking recognises SQL-style doubled-quote escapes (`''`, `""`) in `StripComments`, but not backslash escapes (`\'`). MySQL by default supports both, so a macro token appearing inside a backslash-escaped string can still be expanded. Callers targeting MySQL-like dialects should pre-sanitise or disable comment stripping if this matters.
+- Line-comment stripping terminates at `\n` only. Classic-Mac `\r` line endings are not treated as terminators.
+- Error messages returned by `Interpolate` may include raw argument text from the query. If those errors are logged, treat them as query fragments (potentially sensitive) and scrub accordingly.
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
