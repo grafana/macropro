@@ -64,44 +64,38 @@ func StripComments(query string, style CommentStyle) string {
 			}
 		}
 
-		// Line comments: -- …\n
+		// Line comments: -- …  (SQL-style)
 		if style&LineComment != 0 && i+1 < len(query) && query[i] == '-' && query[i+1] == '-' {
-			j := i
-			for j < len(query) && query[j] != '\n' {
-				j++
-			}
+			j := scanToLineEnd(query, i)
 			writeSpaces(&b, j-i)
 			i = j
 			continue
 		}
 
-		// Slash line comments: // …\n  (Flux-style)
+		// Slash line comments: // …  (Flux-style)
 		if style&SlashComment != 0 && i+1 < len(query) && query[i] == '/' && query[i+1] == '/' {
-			j := i
-			for j < len(query) && query[j] != '\n' {
-				j++
-			}
+			j := scanToLineEnd(query, i)
 			writeSpaces(&b, j-i)
 			i = j
 			continue
 		}
 
-		// Hash comments: # …\n  (MySQL-style)
+		// Hash comments: # …  (MySQL-style)
 		if style&HashComment != 0 && query[i] == '#' {
-			j := i
-			for j < len(query) && query[j] != '\n' {
-				j++
-			}
+			j := scanToLineEnd(query, i)
 			writeSpaces(&b, j-i)
 			i = j
 			continue
 		}
 
 		// Block comments: /* … */
+		// If the closing */ is missing, the remainder of the input is blanked
+		// through EOF so that a macro token hidden in an unterminated comment
+		// cannot escape the stripper.
 		if style&BlockComment != 0 && i+1 < len(query) && query[i] == '/' && query[i+1] == '*' {
 			j := i + 2
-			for j+1 < len(query) {
-				if query[j] == '*' && query[j+1] == '/' {
+			for j < len(query) {
+				if j+1 < len(query) && query[j] == '*' && query[j+1] == '/' {
 					j += 2
 					break
 				}

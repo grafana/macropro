@@ -216,6 +216,19 @@ func parseArgs(raw string) ([]string, error) {
 // escapes — MySQL and a handful of other dialects accept \' and \", but the
 // SQL standard does not. Callers relying on backslash escapes should
 // pre-sanitise or disable comment stripping via [WithComments](0).
+// scanToLineEnd returns the index of the first line terminator at or after
+// start in s, or len(s) if none is found. Both \n and \r are recognised, so
+// classic-Mac \r-only line endings terminate line comments correctly without
+// over-stripping content that follows. The returned index points AT the
+// terminator; the caller is responsible for emitting or preserving it.
+func scanToLineEnd(s string, start int) int {
+	j := start
+	for j < len(s) && s[j] != '\n' && s[j] != '\r' {
+		j++
+	}
+	return j
+}
+
 func scanStringLiteral(s string, pos int) int {
 	quote := s[pos]
 	j := pos + 1

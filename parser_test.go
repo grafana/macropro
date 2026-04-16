@@ -488,6 +488,86 @@ func TestStripComments_slash(t *testing.T) {
 	}
 }
 
+func TestStripComments_unterminatedBlock(t *testing.T) {
+	// An unterminated /* comment should be blanked all the way to EOF — no
+	// trailing byte should be emitted as if it were outside the comment.
+	input := "SELECT /* $__foo unterminated"
+	got := StripComments(input, BlockComment)
+	want := "SELECT " + strings.Repeat(" ", len("/* $__foo unterminated"))
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if len(got) != len(input) {
+		t.Errorf("length should be preserved; got %d want %d", len(got), len(input))
+	}
+}
+
+func TestStripComments_unterminatedBlockHidesMacro(t *testing.T) {
+	// Regression: the byte at len-1 of an unterminated /* must not survive.
+	// Building a string where the would-leak byte is a macro character helps
+	// guard against the off-by-one returning.
+	input := "/* $__x"
+	got := StripComments(input, BlockComment)
+	want := strings.Repeat(" ", len(input))
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestStripComments_lineCommentCRLF(t *testing.T) {
+	// Windows line endings: scanner stops at \r, leaving \r\n intact.
+	input := "SELECT * -- cmt\r\nFROM t"
+	got := StripComments(input, LineComment)
+	want := "SELECT * " + strings.Repeat(" ", len("-- cmt")) + "\r\nFROM t"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestStripComments_lineCommentCROnly(t *testing.T) {
+	// Classic-Mac line endings: \r alone terminates a line comment, so the
+	// content AFTER \r (including any macro tokens) is preserved and will be
+	// evaluated normally by Interpolate.
+	input := "SELECT * -- cmt\r$__foo"
+	got := StripComments(input, LineComment)
+	want := "SELECT * " + strings.Repeat(" ", len("-- cmt")) + "\r$__foo"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestStripComments_hashCommentCR(t *testing.T) {
+	input := "SELECT * # cmt\r$__foo"
+	got := StripComments(input, HashComment)
+	want := "SELECT * " + strings.Repeat(" ", len("# cmt")) + "\r$__foo"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestStripComments_slashCommentCR(t *testing.T) {
+	input := `from(bucket: "b") // cmt` + "\rv.bucket"
+	got := StripComments(input, SlashComment)
+	want := `from(bucket: "b") ` + strings.Repeat(" ", len("// cmt")) + "\rv.bucket"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+}
+
+func TestStripComments_lineCommentAtEOF(t *testing.T) {
+	// Line comment running to EOF (no trailing newline): the whole thing
+	// should be blanked, and the output length must match the input.
+	input := "SELECT 1 -- trailing"
+	got := StripComments(input, LineComment)
+	want := "SELECT 1 " + strings.Repeat(" ", len("-- trailing"))
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if len(got) != len(input) {
+		t.Errorf("length should be preserved; got %d want %d", len(got), len(input))
+	}
+}
+
 // ---- helpers ----
 
 func mustTime(s string) time.Time {
