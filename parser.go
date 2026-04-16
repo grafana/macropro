@@ -40,9 +40,12 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 	// Strip comments before macro expansion so that tokens inside comment
 	// regions are never evaluated. This closes the attack vector where a macro
 	// hidden behind a -- or /* */ comment still triggers side effects (e.g.
-	// fill-mode activation leading to OOM via ResampleWideFrame).
+	// fill-mode activation leading to OOM via ResampleWideFrame). The stripped
+	// copy is held in `work`; `query` retains the caller's original bytes so
+	// they can be returned untouched on error.
+	work := query
 	if o.comments != 0 {
-		query = StripComments(query, o.comments)
+		work = StripComments(work, o.comments)
 	}
 
 	// Build a sorted list of names, longest first, to prevent prefix collisions.
@@ -57,13 +60,12 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 		return names[i] < names[j]
 	})
 
-	result := query
 	for _, name := range names {
 		fn := macros[name]
 		token := o.prefix + name
 
 		var replaceErr error
-		result = replaceAllMacro(result, token, func(raw string) string {
+		work = replaceAllMacro(work, token, func(raw string) string {
 			if replaceErr != nil {
 				return raw // already errored — leave remaining tokens alone
 			}
@@ -84,7 +86,7 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 			return query, replaceErr
 		}
 	}
-	return result, nil
+	return work, nil
 }
 
 // MergeMacros returns a new MacroMap with every entry from base, with entries

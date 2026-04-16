@@ -629,6 +629,44 @@ func TestInterpolate_handlerPanicStopsFurtherExpansion(t *testing.T) {
 	}
 }
 
+func TestInterpolate_errorReturnsUnstrippedOriginal(t *testing.T) {
+	// On handler error, Interpolate must return the caller's original query
+	// byte-for-byte — not the comment-stripped work copy. A previous version
+	// accidentally returned the stripped version, silently mutating the query
+	// visible to callers that ignored the error.
+	macros := MacroMap[struct{}]{
+		"fail": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return "", fmt.Errorf("nope")
+		},
+	}
+	// The -- comment contains something that would otherwise be blanked.
+	input := "SELECT 1 -- keep this comment visible\n$__fail"
+	got, err := Interpolate(input, macros, QueryContext[struct{}]{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got != input {
+		t.Errorf("on error, must return input verbatim\ngot  %q\nwant %q", got, input)
+	}
+}
+
+func TestInterpolate_errorReturnsOriginalOnPanic(t *testing.T) {
+	// Same guarantee when the handler panics rather than returning an error.
+	macros := MacroMap[struct{}]{
+		"boom": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			panic("x")
+		},
+	}
+	input := "-- hidden $__boom\n$__boom"
+	got, err := Interpolate(input, macros, QueryContext[struct{}]{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got != input {
+		t.Errorf("on panic, must return input verbatim\ngot  %q\nwant %q", got, input)
+	}
+}
+
 // ---- helpers ----
 
 func mustTime(s string) time.Time {
