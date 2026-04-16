@@ -21,10 +21,12 @@
 //
 // # Comment stripping
 //
-// Before calling Interpolate, callers that want to skip macro tokens inside
-// SQL comments should call [StripComments]:
+// [Interpolate] automatically strips standard SQL line comments (--) and block
+// comments (/* */) before expanding macros, so macro tokens hidden inside
+// comments are never evaluated. Callers using MySQL, which also supports #
+// as a line-comment delimiter, should pre-strip hash comments:
 //
-//	clean := macropro.StripComments(query, macropro.LineComment|macropro.BlockComment)
+//	clean := macropro.StripComments(query, macropro.HashComment)
 //	result, err := macropro.Interpolate(clean, macros, ctx)
 package macropro
 

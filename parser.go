@@ -14,6 +14,11 @@ import (
 // Macro names are matched longest-first so that $__interval_ms is never
 // incorrectly matched as $__interval.
 //
+// Standard SQL line comments (--) and block comments (/* */) are stripped
+// before macro expansion so that a macro token placed inside a comment is
+// never evaluated. Callers that also need MySQL-style hash comment stripping
+// (#) should call [StripComments] with [HashComment] before calling Interpolate.
+//
 // Tokens whose names do not appear in macros are left unchanged. The first
 // handler error is returned immediately; the original query string is
 // returned alongside the error.
@@ -21,6 +26,12 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T]) (
 	if len(macros) == 0 {
 		return query, nil
 	}
+
+	// Strip SQL comments before macro expansion so that tokens inside comment
+	// regions are never evaluated. This closes the attack vector where a macro
+	// hidden behind a -- or /* */ comment still triggers side effects (e.g.
+	// fill-mode activation leading to OOM via ResampleWideFrame).
+	query = StripComments(query, LineComment|BlockComment)
 
 	// Build a sorted list of names, longest first, to prevent prefix collisions.
 	names := make([]string, 0, len(macros))

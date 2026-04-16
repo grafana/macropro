@@ -159,6 +159,53 @@ func TestInterpolate_zeroArgWithParens(t *testing.T) {
 	}
 }
 
+// TestInterpolate_macroInLineCommentNotExpanded is a regression test for the
+// OOM vulnerability where a macro hidden behind a SQL -- comment was still
+// evaluated by the macro engine, triggering fill-mode side effects that caused
+// ResampleWideFrame to allocate memory for billions of rows.
+func TestInterpolate_macroInLineCommentNotExpanded(t *testing.T) {
+	expanded := false
+	macros := MacroMap[struct{}]{
+		"timeGroup": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			expanded = true
+			return "FLOOR(UNIX_TIMESTAMP(time)/1)*1", nil
+		},
+	}
+	// The $__timeGroup macro is intentionally placed after a -- comment, as in
+	// the reported PoC: rawSql ends with "-- $__timeGroup(time, '1s', 0)"
+	query := `SELECT time, val FROM metrics -- $__timeGroup(time, '1s', 0)`
+	got, err := Interpolate(query, macros, QueryContext[struct{}]{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if expanded {
+		t.Error("macro inside -- comment was expanded; fill-mode side effects could be triggered")
+	}
+	// The comment region should still be present (as spaces) — the non-comment
+	// part of the query must be unchanged.
+	if want := "SELECT time, val FROM metrics "; got[:len(want)] != want {
+		t.Errorf("query prefix mangled: got %q", got[:len(want)])
+	}
+}
+
+func TestInterpolate_macroInBlockCommentNotExpanded(t *testing.T) {
+	expanded := false
+	macros := MacroMap[struct{}]{
+		"timeGroup": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			expanded = true
+			return "FLOOR(...)", nil
+		},
+	}
+	query := `SELECT time, val FROM metrics /* $__timeGroup(time, '1s', 0) */`
+	_, err := Interpolate(query, macros, QueryContext[struct{}]{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if expanded {
+		t.Error("macro inside /* */ comment was expanded")
+	}
+}
+
 func TestMergeMacros_overrideWins(t *testing.T) {
 	base := MacroMap[struct{}]{
 		"foo": func(_ QueryContext[struct{}], _ []string) (string, error) { return "base", nil },
