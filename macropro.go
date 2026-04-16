@@ -45,40 +45,10 @@ func StripComments(query string, style CommentStyle) string {
 
 	i := 0
 	for i < len(query) {
-		// Respect single-quoted strings.
-		if query[i] == '\'' {
-			j := i + 1
-			for j < len(query) {
-				if query[j] == '\'' {
-					j++
-					if j < len(query) && query[j] == '\'' {
-						// Escaped quote '' — keep going.
-						j++
-						continue
-					}
-					break
-				}
-				j++
-			}
-			b.WriteString(query[i:j])
-			i = j
-			continue
-		}
-
-		// Respect double-quoted identifiers.
-		if query[i] == '"' {
-			j := i + 1
-			for j < len(query) {
-				if query[j] == '"' {
-					j++
-					if j < len(query) && query[j] == '"' {
-						j++
-						continue
-					}
-					break
-				}
-				j++
-			}
+		// Respect single- and double-quoted strings (and PostgreSQL identifiers).
+		// scanStringLiteral handles SQL-style doubled-quote escapes ('' and "").
+		if query[i] == '\'' || query[i] == '"' {
+			j := scanStringLiteral(query, i)
 			b.WriteString(query[i:j])
 			i = j
 			continue

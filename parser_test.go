@@ -292,6 +292,85 @@ func TestParseArgs_quotedComma(t *testing.T) {
 	}
 }
 
+func TestParseArgs_doubledSingleQuote(t *testing.T) {
+	// SQL-style doubled-quote escape: 'it''s' is one string literal
+	// containing "it's" and a comma inside it must NOT split the args.
+	args, err := parseArgs(`'it''s, fine', x`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[0] != `'it''s, fine'` || args[1] != "x" {
+		t.Errorf("got %v", args)
+	}
+}
+
+func TestParseArgs_doubledDoubleQuote(t *testing.T) {
+	// Same idea for double-quoted identifiers: "he said ""hi"", then left"
+	// is one identifier and commas inside do not split.
+	args, err := parseArgs(`"he said ""hi"", then left", y`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 2 || args[0] != `"he said ""hi"", then left"` || args[1] != "y" {
+		t.Errorf("got %v", args)
+	}
+}
+
+func TestFindClosingParen_doubledQuote(t *testing.T) {
+	// A doubled-quote inside a string should not prematurely end the literal,
+	// so the outer ')' is correctly located.
+	s := `('it''s') rest`
+	end, err := findClosingParen(s, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s[end] != ')' || end != 8 {
+		t.Errorf("got end=%d (char %q), want 8 (char ')')", end, s[end])
+	}
+}
+
+func TestInterpolate_macroWithDoubledQuoteArg(t *testing.T) {
+	// End-to-end: a macro whose argument contains a doubled-quote escape
+	// must be parsed as a single argument and expanded once.
+	var gotArgs []string
+	macros := MacroMap[struct{}]{
+		"id": func(_ QueryContext[struct{}], args []string) (string, error) {
+			gotArgs = args
+			return "OK", nil
+		},
+	}
+	// $__id('it''s, still one arg') — the comma is inside the string literal.
+	query := `SELECT $__id('it''s, still one arg') FROM t`
+	result, err := Interpolate(query, macros, QueryContext[struct{}]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotArgs) != 1 || gotArgs[0] != `'it''s, still one arg'` {
+		t.Errorf("args: got %v, want single arg with doubled quote", gotArgs)
+	}
+	if result != `SELECT OK FROM t` {
+		t.Errorf("result: got %q", result)
+	}
+}
+
+func TestScanStringLiteral_unterminated(t *testing.T) {
+	// An unterminated string literal should not panic; scanner returns len(s).
+	s := `'unterminated`
+	end := scanStringLiteral(s, 0)
+	if end != len(s) {
+		t.Errorf("got end=%d, want %d", end, len(s))
+	}
+}
+
+func TestScanStringLiteral_trailingDoubledQuote(t *testing.T) {
+	// 'a''  — opens, sees '', treats as escape, reaches EOF unterminated.
+	s := `'a''`
+	end := scanStringLiteral(s, 0)
+	if end != len(s) {
+		t.Errorf("got end=%d, want %d", end, len(s))
+	}
+}
+
 func TestInterpolate_withPrefix_fluxStyle(t *testing.T) {
 	// Flux uses "v." as its macro prefix, e.g. v.timeRangeStart, v.bucket.
 	macros := MacroMap[struct{}]{

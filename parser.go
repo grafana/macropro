@@ -144,26 +144,21 @@ func isNameChar(b byte) bool {
 // double-quoted strings.
 func findClosingParen(s string, open int) (int, error) {
 	depth := 0
-	inSingle := false
-	inDouble := false
-
-	for i := open; i < len(s); i++ {
+	for i := open; i < len(s); {
 		c := s[i]
-		switch {
-		case c == '\'' && !inDouble:
-			inSingle = !inSingle
-		case c == '"' && !inSingle:
-			inDouble = !inDouble
-		case inSingle || inDouble:
-			// Inside a string literal — skip everything.
-		case c == '(':
+		switch c {
+		case '\'', '"':
+			i = scanStringLiteral(s, i)
+			continue
+		case '(':
 			depth++
-		case c == ')':
+		case ')':
 			depth--
 			if depth == 0 {
 				return i, nil
 			}
 		}
+		i++
 	}
 	return -1, fmt.Errorf("unbalanced parentheses")
 }
@@ -180,34 +175,60 @@ func parseArgs(raw string) ([]string, error) {
 
 	var args []string
 	depth := 0
-	inSingle := false
-	inDouble := false
 	start := 0
 
-	for i := 0; i < len(raw); i++ {
+	for i := 0; i < len(raw); {
 		c := raw[i]
-		switch {
-		case c == '\'' && !inDouble:
-			inSingle = !inSingle
-		case c == '"' && !inSingle:
-			inDouble = !inDouble
-		case inSingle || inDouble:
-			// Inside a string literal — skip.
-		case c == '(':
+		switch c {
+		case '\'', '"':
+			i = scanStringLiteral(raw, i)
+			continue
+		case '(':
 			depth++
-		case c == ')':
+		case ')':
 			if depth == 0 {
 				return nil, fmt.Errorf("unexpected ')' at position %d", i)
 			}
 			depth--
-		case c == ',' && depth == 0:
-			args = append(args, strings.TrimSpace(raw[start:i]))
-			start = i + 1
+		case ',':
+			if depth == 0 {
+				args = append(args, strings.TrimSpace(raw[start:i]))
+				start = i + 1
+			}
 		}
+		i++
 	}
 	if depth != 0 {
 		return nil, fmt.Errorf("unbalanced parentheses in arguments")
 	}
 	args = append(args, strings.TrimSpace(raw[start:]))
 	return args, nil
+}
+
+// scanStringLiteral advances past a SQL-style quoted string literal starting
+// at position pos in s, where s[pos] is either a single or double quote.
+// Returns the index immediately after the closing quote. Recognises doubled-
+// quote escapes ('' within a single-quoted string, "" within a double-quoted
+// string). If the literal is unterminated, returns len(s).
+//
+// This helper is the single source of truth for string-literal boundaries
+// across the parser and [StripComments]. It does NOT recognise backslash
+// escapes — MySQL and a handful of other dialects accept \' and \", but the
+// SQL standard does not. Callers relying on backslash escapes should
+// pre-sanitise or disable comment stripping via [WithComments](0).
+func scanStringLiteral(s string, pos int) int {
+	quote := s[pos]
+	j := pos + 1
+	for j < len(s) {
+		if s[j] == quote {
+			if j+1 < len(s) && s[j+1] == quote {
+				// Doubled-quote escape — keep going.
+				j += 2
+				continue
+			}
+			return j + 1
+		}
+		j++
+	}
+	return j // unterminated — treat rest of input as string content
 }
