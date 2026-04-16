@@ -39,7 +39,27 @@ import "strings"
 //
 // The returned string has the same byte length in comment regions replaced by
 // spaces, so that line/column positions in error messages remain accurate.
+//
+// When the input contains nothing that could start a comment or string
+// literal, the original string is returned unchanged with no allocation.
 func StripComments(query string, style CommentStyle) string {
+	// Fast path: if no comment-stripping bit is set, there is nothing to do.
+	// DollarQuote alone is a no-op because it only preserves regions that are
+	// already copied verbatim.
+	const anyCommentStyle = LineComment | BlockComment | HashComment | SlashComment
+	if style&anyCommentStyle == 0 {
+		return query
+	}
+
+	// Fast path: most real-world queries contain no comments and no string
+	// literals. Scan for any byte that could trigger action under the current
+	// style; if none is present, return the input unchanged. strings.IndexAny
+	// is SIMD-accelerated on common platforms, so this is much cheaper than a
+	// per-byte Go loop.
+	if !strings.ContainsAny(query, stripNeedles(style)) {
+		return query
+	}
+
 	var b strings.Builder
 	b.Grow(len(query))
 
@@ -140,6 +160,56 @@ func parseDollarQuote(s string, pos int) (tag string, end int) {
 	}
 	return openTag, j + 1 + idx + len(openTag)
 }
+
+// stripNeedles returns the set of bytes that could start a comment under the
+// given style. Quote characters are deliberately NOT included: if a query
+// contains no comment starter, there is nothing to strip regardless of what
+// lies inside string literals, so we can skip the full scan.
+//
+// The caller has already verified that at least one comment-stripping bit
+// is set. DollarQuote is included because we must enter the scanner to
+// preserve $tag$…$tag$ regions when other comment styles are active.
+//
+// Common style values return a constant so the hot path is allocation-free;
+// unusual combinations fall through to a small builder.
+func stripNeedles(style CommentStyle) string {
+	switch style {
+	case LineComment | BlockComment:
+		return stripNeedlesSQL
+	case LineComment | BlockComment | HashComment:
+		return stripNeedlesMySQL
+	case LineComment | BlockComment | DollarQuote:
+		return stripNeedlesPostgres
+	case LineComment | BlockComment | HashComment | DollarQuote:
+		return stripNeedlesMySQLPG
+	case SlashComment | BlockComment:
+		return stripNeedlesFlux
+	}
+
+	var b strings.Builder
+	b.Grow(4)
+	if style&LineComment != 0 {
+		b.WriteByte('-')
+	}
+	if style&(BlockComment|SlashComment) != 0 {
+		b.WriteByte('/')
+	}
+	if style&HashComment != 0 {
+		b.WriteByte('#')
+	}
+	if style&DollarQuote != 0 {
+		b.WriteByte('$')
+	}
+	return b.String()
+}
+
+const (
+	stripNeedlesSQL      = "-/"
+	stripNeedlesMySQL    = "-/#"
+	stripNeedlesPostgres = "-/$"
+	stripNeedlesMySQLPG  = "-/#$"
+	stripNeedlesFlux     = "/"
+)
 
 func isDollarTagChar(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
