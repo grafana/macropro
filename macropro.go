@@ -60,59 +60,59 @@ func StripComments(query string, style CommentStyle) string {
 		return query
 	}
 
+	needles := scanNeedles(style)
 	var b strings.Builder
 	b.Grow(len(query))
 
 	i := 0
 	for i < len(query) {
-		// Respect single- and double-quoted strings (and PostgreSQL identifiers).
-		// scanStringLiteral handles SQL-style doubled-quote escapes ('' and "").
-		if query[i] == '\'' || query[i] == '"' {
+		// Jump directly to the next byte that could trigger an action.
+		// strings.IndexAny is SIMD-accelerated, so long runs of ordinary
+		// bytes are copied as a single WriteString rather than one
+		// WriteByte per character.
+		rel := strings.IndexAny(query[i:], needles)
+		if rel < 0 {
+			b.WriteString(query[i:])
+			break
+		}
+		if rel > 0 {
+			b.WriteString(query[i : i+rel])
+			i += rel
+		}
+
+		c := query[i]
+		switch {
+		case c == '\'' || c == '"':
+			// Single- or double-quoted literal (handles '' and "" escapes).
 			j := scanStringLiteral(query, i)
 			b.WriteString(query[i:j])
 			i = j
-			continue
-		}
 
-		// PostgreSQL dollar-quoted strings: $tag$…$tag$
-		if style&DollarQuote != 0 && query[i] == '$' {
-			if tag, end := parseDollarQuote(query, i); end >= 0 {
+		case style&DollarQuote != 0 && c == '$':
+			// PostgreSQL dollar-quoted string: $tag$…$tag$
+			if _, end := parseDollarQuote(query, i); end >= 0 {
 				b.WriteString(query[i:end])
 				i = end
-				_ = tag
-				continue
+			} else {
+				// Lone $ that is not a dollar-quote start — copy as-is.
+				b.WriteByte(c)
+				i++
 			}
-		}
 
-		// Line comments: -- …  (SQL-style)
-		if style&LineComment != 0 && i+1 < len(query) && query[i] == '-' && query[i+1] == '-' {
+		case style&LineComment != 0 && c == '-' && i+1 < len(query) && query[i+1] == '-':
 			j := scanToLineEnd(query, i)
 			writeSpaces(&b, j-i)
 			i = j
-			continue
-		}
 
-		// Slash line comments: // …  (Flux-style)
-		if style&SlashComment != 0 && i+1 < len(query) && query[i] == '/' && query[i+1] == '/' {
+		case style&SlashComment != 0 && c == '/' && i+1 < len(query) && query[i+1] == '/':
 			j := scanToLineEnd(query, i)
 			writeSpaces(&b, j-i)
 			i = j
-			continue
-		}
 
-		// Hash comments: # …  (MySQL-style)
-		if style&HashComment != 0 && query[i] == '#' {
-			j := scanToLineEnd(query, i)
-			writeSpaces(&b, j-i)
-			i = j
-			continue
-		}
-
-		// Block comments: /* … */
-		// If the closing */ is missing, the remainder of the input is blanked
-		// through EOF so that a macro token hidden in an unterminated comment
-		// cannot escape the stripper.
-		if style&BlockComment != 0 && i+1 < len(query) && query[i] == '/' && query[i+1] == '*' {
+		case style&BlockComment != 0 && c == '/' && i+1 < len(query) && query[i+1] == '*':
+			// If the closing */ is missing, the remainder of the input is
+			// blanked through EOF so that a macro token hidden in an
+			// unterminated comment cannot escape the stripper.
 			j := i + 2
 			for j < len(query) {
 				if j+1 < len(query) && query[j] == '*' && query[j+1] == '/' {
@@ -123,11 +123,19 @@ func StripComments(query string, style CommentStyle) string {
 			}
 			writeSpaces(&b, j-i)
 			i = j
-			continue
-		}
 
-		b.WriteByte(query[i])
-		i++
+		case style&HashComment != 0 && c == '#':
+			j := scanToLineEnd(query, i)
+			writeSpaces(&b, j-i)
+			i = j
+
+		default:
+			// Byte matched the needle set but did not start any enabled
+			// comment (e.g. a lone '-' with LineComment enabled but no
+			// second '-', or a '/' that is neither /* nor //). Copy it.
+			b.WriteByte(c)
+			i++
+		}
 	}
 	return b.String()
 }
@@ -209,6 +217,55 @@ const (
 	stripNeedlesPostgres = "-/$"
 	stripNeedlesMySQLPG  = "-/#$"
 	stripNeedlesFlux     = "/"
+)
+
+// scanNeedles returns the set of bytes that the full scanner must stop on:
+// every byte from [stripNeedles] plus the two quote characters, since the
+// scanner has to enter string-literal tracking mode when it sees a quote.
+// This is the needle set passed to strings.IndexAny inside the main loop,
+// allowing long runs of ordinary bytes to be copied as a single WriteString.
+//
+// Common style values return a constant so the hot path is allocation-free;
+// unusual combinations fall through to a small builder.
+func scanNeedles(style CommentStyle) string {
+	switch style {
+	case LineComment | BlockComment:
+		return scanNeedlesSQL
+	case LineComment | BlockComment | HashComment:
+		return scanNeedlesMySQL
+	case LineComment | BlockComment | DollarQuote:
+		return scanNeedlesPostgres
+	case LineComment | BlockComment | HashComment | DollarQuote:
+		return scanNeedlesMySQLPG
+	case SlashComment | BlockComment:
+		return scanNeedlesFlux
+	}
+
+	var b strings.Builder
+	b.Grow(6)
+	b.WriteByte('\'')
+	b.WriteByte('"')
+	if style&LineComment != 0 {
+		b.WriteByte('-')
+	}
+	if style&(BlockComment|SlashComment) != 0 {
+		b.WriteByte('/')
+	}
+	if style&HashComment != 0 {
+		b.WriteByte('#')
+	}
+	if style&DollarQuote != 0 {
+		b.WriteByte('$')
+	}
+	return b.String()
+}
+
+const (
+	scanNeedlesSQL      = "'\"-/"
+	scanNeedlesMySQL    = "'\"-/#"
+	scanNeedlesPostgres = "'\"-/$"
+	scanNeedlesMySQLPG  = "'\"-/#$"
+	scanNeedlesFlux     = "'\"/"
 )
 
 func isDollarTagChar(c byte) bool {
