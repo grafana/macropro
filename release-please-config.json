@@ -1,0 +1,58 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "go",
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "changelog-sections": [
+    {
+      "section": "🎉 Features",
+      "type": "feat"
+    },
+    {
+      "section": "🐛 Bug Fixes",
+      "type": "fix"
+    },
+    {
+      "section": "📝 Documentation",
+      "type": "docs"
+    },
+    {
+      "section": "💄 Style",
+      "type": "style"
+    },
+    {
+      "section": "♻️ Code Refactoring",
+      "type": "refactor"
+    },
+    {
+      "section": "⚡ Performance Improvements",
+      "type": "perf"
+    },
+    {
+      "section": "✅ Tests",
+      "type": "test"
+    },
+    {
+      "section": "🏗️ Builds",
+      "type": "build"
+    },
+    {
+      "section": "🤖 Continuous Integration",
+      "type": "ci"
+    },
+    {
+      "section": "🔧 Chores",
+      "type": "chore"
+    },
+    {
+      "section": "⏪ Reverts",
+      "type": "revert"
+    }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "macropro"
+    }
+  }
+}
