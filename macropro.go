@@ -183,15 +183,15 @@ func parseDollarQuote(s string, pos int) (tag string, end int) {
 func stripNeedles(style CommentStyle) string {
 	switch style {
 	case LineComment | BlockComment:
-		return stripNeedlesSQL
+		return stripNeedlesLineBlock
 	case LineComment | BlockComment | HashComment:
-		return stripNeedlesMySQL
+		return stripNeedlesLineBlockHash
 	case LineComment | BlockComment | DollarQuote:
-		return stripNeedlesPostgres
+		return stripNeedlesLineBlockDollar
 	case LineComment | BlockComment | HashComment | DollarQuote:
-		return stripNeedlesMySQLPG
+		return stripNeedlesLineBlockHashDollar
 	case SlashComment | BlockComment:
-		return stripNeedlesFlux
+		return stripNeedlesSlashBlock
 	}
 
 	var b strings.Builder
@@ -212,11 +212,11 @@ func stripNeedles(style CommentStyle) string {
 }
 
 const (
-	stripNeedlesSQL      = "-/"
-	stripNeedlesMySQL    = "-/#"
-	stripNeedlesPostgres = "-/$"
-	stripNeedlesMySQLPG  = "-/#$"
-	stripNeedlesFlux     = "/"
+	stripNeedlesLineBlock           = "-/"
+	stripNeedlesLineBlockHash       = "-/#"
+	stripNeedlesLineBlockDollar     = "-/$"
+	stripNeedlesLineBlockHashDollar = "-/#$"
+	stripNeedlesSlashBlock          = "/"
 )
 
 // scanNeedles returns the set of bytes that the full scanner must stop on:
@@ -230,15 +230,15 @@ const (
 func scanNeedles(style CommentStyle) string {
 	switch style {
 	case LineComment | BlockComment:
-		return scanNeedlesSQL
+		return scanNeedlesLineBlock
 	case LineComment | BlockComment | HashComment:
-		return scanNeedlesMySQL
+		return scanNeedlesLineBlockHash
 	case LineComment | BlockComment | DollarQuote:
-		return scanNeedlesPostgres
+		return scanNeedlesLineBlockDollar
 	case LineComment | BlockComment | HashComment | DollarQuote:
-		return scanNeedlesMySQLPG
+		return scanNeedlesLineBlockHashDollar
 	case SlashComment | BlockComment:
-		return scanNeedlesFlux
+		return scanNeedlesSlashBlock
 	}
 
 	var b strings.Builder
@@ -261,11 +261,11 @@ func scanNeedles(style CommentStyle) string {
 }
 
 const (
-	scanNeedlesSQL      = "'\"-/"
-	scanNeedlesMySQL    = "'\"-/#"
-	scanNeedlesPostgres = "'\"-/$"
-	scanNeedlesMySQLPG  = "'\"-/#$"
-	scanNeedlesFlux     = "'\"/"
+	scanNeedlesLineBlock           = "'\"-/"
+	scanNeedlesLineBlockHash       = "'\"-/#"
+	scanNeedlesLineBlockDollar     = "'\"-/$"
+	scanNeedlesLineBlockHashDollar = "'\"-/#$"
+	scanNeedlesSlashBlock          = "'\"/"
 )
 
 func isDollarTagChar(c byte) bool {
