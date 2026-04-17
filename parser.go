@@ -3,7 +3,6 @@ package macropro
 import (
 	"fmt"
 	"maps"
-	"sort"
 	"strings"
 )
 
@@ -48,45 +47,76 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 		work = StripComments(work, o.comments)
 	}
 
-	// Build a sorted list of names, longest first, to prevent prefix collisions.
-	names := make([]string, 0, len(macros))
-	for name := range macros {
-		names = append(names, name)
-	}
-	sort.Slice(names, func(i, j int) bool {
-		if len(names[i]) != len(names[j]) {
-			return len(names[i]) > len(names[j])
+	// Single forward scan: find each prefix occurrence, read the macro name
+	// greedily at the natural word boundary, and dispatch via map lookup.
+	// Greedy name-reading inherently prevents $__interval from matching inside
+	// $__interval_ms — the scanner always consumes the longest valid name
+	// before consulting the map, so no longest-first sort is required.
+	prefix := o.prefix
+	var b strings.Builder
+	b.Grow(len(work))
+
+	i := 0
+	for i < len(work) {
+		rel := strings.Index(work[i:], prefix)
+		if rel < 0 {
+			b.WriteString(work[i:])
+			break
 		}
-		return names[i] < names[j]
-	})
-
-	for _, name := range names {
-		fn := macros[name]
-		token := o.prefix + name
-
-		var replaceErr error
-		work = replaceAllMacro(work, token, func(raw string) string {
-			if replaceErr != nil {
-				return raw // already errored — leave remaining tokens alone
-			}
-			args, err := parseArgs(raw)
-			if err != nil {
-				replaceErr = fmt.Errorf("macro %s: %w", token, err)
-				return raw
-			}
-			replacement, err := callHandler(fn, ctx, args)
-			if err != nil {
-				replaceErr = fmt.Errorf("macro %s(%s): %w", token, strings.Join(args, ", "), err)
-				return raw
-			}
-			return replacement
-		})
-
-		if replaceErr != nil {
-			return query, replaceErr
+		if rel > 0 {
+			b.WriteString(work[i : i+rel])
+			i += rel
 		}
+
+		// Read the macro name (identifier chars only).
+		nameStart := i + len(prefix)
+		nameEnd := nameStart
+		for nameEnd < len(work) && isNameChar(work[nameEnd]) {
+			nameEnd++
+		}
+
+		if nameStart == nameEnd {
+			// Bare prefix with nothing that looks like a name after it —
+			// emit the prefix verbatim and continue scanning.
+			b.WriteString(prefix)
+			i = nameStart
+			continue
+		}
+
+		name := work[nameStart:nameEnd]
+		fn, ok := macros[name]
+		if !ok {
+			// Unknown macro — copy prefix+name through and advance.
+			b.WriteString(work[i:nameEnd])
+			i = nameEnd
+			continue
+		}
+
+		// Consume an optional argument list.
+		raw := ""
+		after := nameEnd
+		if after < len(work) && work[after] == '(' {
+			end, err := findClosingParen(work, after)
+			if err == nil {
+				raw = work[after+1 : end]
+				after = end + 1
+			}
+			// If parens are unbalanced, fall through as a zero-arg call.
+		}
+
+		args, err := parseArgs(raw)
+		if err != nil {
+			return query, fmt.Errorf("macro %s%s: %w", prefix, name, err)
+		}
+		replacement, err := callHandler(fn, ctx, args)
+		if err != nil {
+			return query, fmt.Errorf("macro %s%s(%s): %w", prefix, name, strings.Join(args, ", "), err)
+		}
+		b.WriteString(replacement)
+		i = after
 	}
-	return work, nil
+
+	return b.String(), nil
 }
 
 // MergeMacros returns a new MacroMap with every entry from base, with entries
@@ -96,44 +126,6 @@ func MergeMacros[T any](base, overrides MacroMap[T]) MacroMap[T] {
 	maps.Copy(merged, base)
 	maps.Copy(merged, overrides)
 	return merged
-}
-
-// replaceAllMacro finds all occurrences of token (possibly followed by a
-// parenthesised argument list) in s and calls fn with the raw argument string
-// (empty string if no parens found). fn returns the replacement text.
-func replaceAllMacro(s, token string, fn func(raw string) string) string {
-	var b strings.Builder
-	for {
-		idx := strings.Index(s, token)
-		if idx == -1 {
-			b.WriteString(s)
-			break
-		}
-
-		// Ensure this is a complete name match and not the prefix of a longer macro.
-		after := idx + len(token)
-		if after < len(s) && isNameChar(s[after]) {
-			b.WriteString(s[:after])
-			s = s[after:]
-			continue
-		}
-
-		b.WriteString(s[:idx])
-		s = s[after:]
-
-		// Consume an optional argument list.
-		raw := ""
-		if len(s) > 0 && s[0] == '(' {
-			end, err := findClosingParen(s, 0)
-			if err == nil {
-				raw = s[1:end] // content between the parens
-				s = s[end+1:] // advance past the closing paren
-			}
-			// If parens are unbalanced, treat as zero-arg and leave s alone.
-		}
-		b.WriteString(fn(raw))
-	}
-	return b.String()
 }
 
 // isNameChar reports whether b is a valid macro name character ([_a-zA-Z0-9]).
