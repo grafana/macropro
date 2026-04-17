@@ -10,7 +10,7 @@ Grafana macros take the form `$__name` or `$__name(arg1, arg2, …)` and are exp
 go get github.com/grafana/macropro
 ```
 
-Requires Go 1.21 or later (uses generics and `maps.Copy`).
+Requires Go 1.23 or later (uses generics and `maps.Copy`).
 
 ## Quick start
 
@@ -96,7 +96,7 @@ type MacroFunc func(query *sqlutil.Query, args []string) (string, error)
 type MacroFunc[T any] func(ctx QueryContext[T], args []string) (string, error)
 ```
 
-The standard migration pattern keeps sqlds for query execution while replacing its interpolation engine with macropro. It requires two small pieces of glue in the datasource's macros package.
+The recommended pattern keeps `sqlds.Driver` for query execution and framing but replaces its interpolation engine entirely: expand macros upstream in the driver's `MutateQueryData` hook, then return an empty `sqlds.Macros{}` from `Driver.Macros()` so sqlds's own scan is a no-op on already-expanded SQL.
 
 ### Step 1 — Bridge `*sqlutil.Query` to `QueryContext`
 
@@ -124,37 +124,80 @@ If your datasource needs extra context (e.g. a database name, cluster ID), defin
 Write your macro handlers as `macropro.MacroFunc[T]`, then expose a standalone `Interpolate` helper so call sites don't need to know about sqlds:
 
 ```go
-var MyMacros = macropro.MacroMap[struct{}]{
-    "timeFilter": func(ctx macropro.QueryContext[struct{}], args []string) (string, error) {
-        // ... datasource-specific SQL ...
+var MyMacros = macropro.MergeMacros(
+    macropro.DefaultMacros[struct{}](),
+    macropro.MacroMap[struct{}]{
+        "timeFilter": func(ctx macropro.QueryContext[struct{}], args []string) (string, error) {
+            // ... datasource-specific SQL ...
+        },
+        // ...
     },
-    // ...
-}
+)
 
 func Interpolate(rawSQL string, q *sqlutil.Query) (string, error) {
     return macropro.Interpolate(rawSQL, MyMacros, contextFrom(q))
 }
 ```
 
-### Step 3 — Keep the sqlds bridge for query execution
+### Step 3 — Expand macros in `MutateQueryData`, return empty sqlds.Macros
 
-If the datasource uses `sqlds.Driver`, its `Macros()` method must return a `sqlds.Macros` map. Rather than duplicating logic, bridge each macropro handler with a one-line adapter:
+In the `sqlds.Driver`, rewrite each query's `rawSql` before sqlds sees it, and report no macros so sqlds does not scan a second time:
 
 ```go
-func adapt(fn macropro.MacroFunc[struct{}]) sqlds.MacroFunc {
-    return func(q *sqlutil.Query, args []string) (string, error) {
-        return fn(contextFrom(q), args)
+// Macros satisfies sqlds.Driver. Returning an empty map disables sqlds's own
+// macro scan; macros are fully expanded by the time sqlds receives the query.
+func (d *Driver) Macros() sqlds.Macros { return sqlds.Macros{} }
+
+func (d *Driver) MutateQueryData(ctx context.Context, req backend.QueryDataRequest) (context.Context, backend.QueryDataRequest) {
+    for i, q := range req.Queries {
+        req.Queries[i] = expandMacrosInQuery(q)
     }
+    return ctx, req
 }
 
-// Macros satisfies the sqlds.Driver interface. Each entry delegates to MyMacros.
-var Macros = sqlds.Macros{
-    "timeFilter": adapt(MyMacros["timeFilter"]),
-    // ...
+func expandMacrosInQuery(q backend.DataQuery) backend.DataQuery {
+    var sqq sqlutil.Query
+    if err := json.Unmarshal(q.JSON, &sqq); err != nil {
+        return q
+    }
+    if sqq.RawSQL == "" {
+        return q
+    }
+    sqq.TimeRange = q.TimeRange
+    sqq.Interval = q.Interval
+
+    expanded, err := Interpolate(sqq.RawSQL, &sqq)
+    if err != nil {
+        backend.Logger.Error("macro expansion failed", "refId", q.RefID, "error", err)
+        return q
+    }
+    if expanded == sqq.RawSQL {
+        return q
+    }
+
+    // Round-trip through a raw map so plugin-specific JSON fields
+    // (meta.timezone, format, etc.) are preserved verbatim.
+    var raw map[string]json.RawMessage
+    if err := json.Unmarshal(q.JSON, &raw); err != nil {
+        return q
+    }
+    newRawSQL, err := json.Marshal(expanded)
+    if err != nil {
+        return q
+    }
+    raw["rawSql"] = newRawSQL
+    newJSON, err := json.Marshal(raw)
+    if err != nil {
+        return q
+    }
+    q.JSON = newJSON
+    return q
 }
 ```
 
-With this in place, `driver.Macros()` returns `Macros` unchanged and sqlds handles query execution as before. New call sites (tests, custom query paths) use `Interpolate` directly — no sqlds dependency required.
+Why not keep sqlds's built-in macro handling? sqlds delegates to `sqlutil`'s defaults, several of which emit SQL that is not valid in every dialect — `$__timeGroup` produces SQL-Server-style `datepart()` calls, `$__timeFrom`/`$__timeTo` emit RFC 3339 string literals that rely on implicit string→DateTime coercion. Expanding with your own `MacroMap` upstream lets you override those defaults with dialect-correct output and drop the `sqlds`-side macro wiring entirely.
+
+Expansion errors cannot be returned from `MutateQueryData`, so the handler logs the error and passes the original query through unchanged; the database then rejects it with its normal syntax error. If you need first-class error reporting, expand in a `CallResource` or custom query path instead.
 
 ## Default macros
 
@@ -273,8 +316,10 @@ type MacroMap[T any] map[string]MacroFunc[T]
 
 ## Implementation notes
 
-- **Longest-match first**: macro names are sorted by descending length before scanning, so `$__interval_ms` is never partially consumed by `$__interval`.
+- **Single-pass greedy name reading**: the parser makes one forward pass over the input. At each prefix occurrence it consumes the longest run of identifier characters and then consults the `MacroMap`, so `$__interval_ms` is always matched in full before `$__interval` is ever considered — no longest-first sort required.
+- **No-prefix fast paths**: if the prefix does not occur in the input, `Interpolate` returns the original string without allocating or stripping comments. If the prefix only occurs inside a comment, the post-strip check short-circuits before allocating a `strings.Builder`.
 - **Bracket-depth argument parsing**: arguments are split by `,` while tracking bracket depth and respecting single- and double-quoted strings, so `$__wrap(COALESCE(a, b), c)` correctly yields two arguments.
+- **Panic isolation**: a panic inside a `MacroFunc` is caught and returned as an error. Handlers are a trust boundary; one buggy handler will not crash the caller.
 - **Error safety**: if a handler returns an error, `Interpolate` returns the original unmodified query alongside the error.
 - **No SQL assumptions**: the parser works on any string; only the default macro implementations produce SQL.
 
@@ -310,14 +355,13 @@ The library is **not** safe if you:
 |---|---|
 | Caller of `Interpolate` | Sanitise any untrusted input **before** it reaches the query string or `QueryContext`. Use parameterised queries at the driver level where possible. |
 | Handler author | Quote, escape, or validate arguments as required by the target dialect. If an argument is expected to be an identifier, reject or quote non-identifier input. |
-| Library | Parse `$__name(args)` tokens correctly, strip comments so hidden macros don't execute, sort longest-name-first, terminate. Nothing else. |
+| Library | Parse `$__name(args)` tokens correctly, strip comments so hidden macros don't execute, consume the longest valid name at each prefix occurrence, contain handler panics, terminate. Nothing else. |
 
 ### Known parser limitations
 
 These are **not** security boundaries, but are worth understanding when reasoning about what the parser treats as a macro vs. what it leaves alone:
 
 - Quote tracking recognises SQL-style doubled-quote escapes (`''`, `""`) in `StripComments`, but not backslash escapes (`\'`). MySQL by default supports both, so a macro token appearing inside a backslash-escaped string can still be expanded. Callers targeting MySQL-like dialects should pre-sanitise or disable comment stripping if this matters.
-- Line-comment stripping terminates at `\n` only. Classic-Mac `\r` line endings are not treated as terminators.
 - Error messages returned by `Interpolate` may include raw argument text from the query. If those errors are logged, treat them as query fragments (potentially sensitive) and scrub accordingly.
 
 ## License
