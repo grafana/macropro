@@ -30,7 +30,12 @@ jobs:
       - name: Verify go.mod is tidy
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum
+          git diff --exit-code -- go.mod
+          # go.sum only exists once external dependencies are introduced —
+          # skip the check until then.
+          if [ -f go.sum ]; then
+            git diff --exit-code -- go.sum
+          fi
 
       - name: Build
         run: go build ./...

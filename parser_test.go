@@ -147,7 +147,7 @@ func TestInterpolate_multipleOccurrences(t *testing.T) {
 
 func TestInterpolate_zeroArgWithParens(t *testing.T) {
 	macros := MacroMap[struct{}]{
-		"now": func(_ QueryContext[struct{}], args []string) (string, error) {
+		"now": func(_ QueryContext[struct{}], _ []string) (string, error) {
 			return "NOW()", nil
 		},
 	}

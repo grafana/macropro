@@ -212,17 +212,6 @@ func parseArgs(raw string) ([]string, error) {
 	return args, nil
 }
 
-// scanStringLiteral advances past a SQL-style quoted string literal starting
-// at position pos in s, where s[pos] is either a single or double quote.
-// Returns the index immediately after the closing quote. Recognises doubled-
-// quote escapes ('' within a single-quoted string, "" within a double-quoted
-// string). If the literal is unterminated, returns len(s).
-//
-// This helper is the single source of truth for string-literal boundaries
-// across the parser and [StripComments]. It does NOT recognise backslash
-// escapes — MySQL and a handful of other dialects accept \' and \", but the
-// SQL standard does not. Callers relying on backslash escapes should
-// pre-sanitise or disable comment stripping via [WithComments](0).
 // callHandler invokes fn(ctx, args) with a deferred recover so that a panic
 // inside a MacroFunc is converted to an error rather than propagating out of
 // [Interpolate]. A handler is arbitrary user code and the library treats it
@@ -250,6 +239,18 @@ func scanToLineEnd(s string, start int) int {
 	return j
 }
 
+// scanStringLiteral advances past a SQL-style quoted string literal starting
+// at position pos in s, where s[pos] is either a single or double quote.
+// Returns the index immediately after the closing quote. Recognises the
+// doubled-quote escape — two consecutive quote characters of the opening type
+// (single or double) inside the literal — so the scanner does not mistake
+// them for a premature close. If the literal is unterminated, returns len(s).
+//
+// This helper is the single source of truth for string-literal boundaries
+// across the parser and [StripComments]. It does NOT recognise backslash
+// escapes — MySQL and a handful of other dialects accept \' and \", but the
+// SQL standard does not. Callers relying on backslash escapes should
+// pre-sanitise or disable comment stripping via [WithComments](0).
 func scanStringLiteral(s string, pos int) int {
 	quote := s[pos]
 	j := pos + 1
@@ -271,8 +272,8 @@ func scanStringLiteral(s string, pos int) int {
 // recognises backslash escapes (\', \", \\, etc.). It is used by [StripComments]
 // when [BackslashEscape] is set — primarily MySQL, whose default
 // NO_BACKSLASH_ESCAPES=OFF mode treats \' inside a string literal as an
-// embedded quote rather than the string's terminator. Doubled-quote escapes
-// ('' and "") are still recognised.
+// embedded quote rather than the string's terminator. The standard
+// doubled-quote escape (two consecutive quote chars) is still recognised.
 func scanStringLiteralBackslash(s string, pos int) int {
 	quote := s[pos]
 	j := pos + 1
