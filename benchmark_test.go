@@ -154,6 +154,36 @@ func BenchmarkStripComments_heavy(b *testing.B) {
 	}
 }
 
+// BenchmarkInterpolate_noPrefix is the dominant real-world case for
+// datasources that also accept raw SQL without Grafana variables: a query
+// that contains no $__ anywhere. Guards M2 (no-prefix fast path) — should
+// short-circuit before StripComments and before allocating a Builder.
+func BenchmarkInterpolate_noPrefix(b *testing.B) {
+	query := strings.Repeat(
+		"SELECT column_a, column_b FROM some_table WHERE key = 'value' ",
+		20,
+	)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sinkString, sinkErr = Interpolate(query, benchMacros, benchCtx)
+	}
+}
+
+// BenchmarkInterpolate_prefixInCommentOnly exercises the second M2 fast
+// path: the only $__ occurrence is hidden inside a comment, so after
+// stripping there is nothing to expand and the Builder allocation can be
+// skipped.
+func BenchmarkInterpolate_prefixInCommentOnly(b *testing.B) {
+	query := "-- dashboard uses $__timeFilter(ts) for the window\n" +
+		"SELECT a, b FROM t WHERE k = 'v' ORDER BY a LIMIT 10"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sinkString, sinkErr = Interpolate(query, benchMacros, benchCtx)
+	}
+}
+
 // BenchmarkStripComments_longNoComments is the no-comment scenario at scale.
 // Currently walks every byte; H1 should short-circuit to a no-op.
 func BenchmarkStripComments_longNoComments(b *testing.B) {

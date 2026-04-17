@@ -44,7 +44,20 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 	// they can be returned untouched on error.
 	work := query
 	if o.comments != 0 {
+		// If the prefix never appears in the raw input, no amount of comment
+		// stripping can make it appear — StripComments only blanks regions,
+		// it never introduces prefix bytes. Skip stripping AND scanning.
+		if !strings.Contains(query, o.prefix) {
+			return query, nil
+		}
 		work = StripComments(work, o.comments)
+	}
+
+	// Second fast path: the prefix may have only appeared inside a comment
+	// that StripComments just blanked out. If no prefix remains, there is
+	// nothing to expand — return work without allocating a Builder.
+	if !strings.Contains(work, o.prefix) {
+		return work, nil
 	}
 
 	// Single forward scan: find each prefix occurrence, read the macro name
