@@ -266,3 +266,48 @@ func scanStringLiteral(s string, pos int) int {
 	}
 	return j // unterminated — treat rest of input as string content
 }
+
+// scanStringLiteralBackslash is a variant of scanStringLiteral that also
+// recognises backslash escapes (\', \", \\, etc.). It is used by [StripComments]
+// when [BackslashEscape] is set — primarily MySQL, whose default
+// NO_BACKSLASH_ESCAPES=OFF mode treats \' inside a string literal as an
+// embedded quote rather than the string's terminator. Doubled-quote escapes
+// ('' and "") are still recognised.
+func scanStringLiteralBackslash(s string, pos int) int {
+	quote := s[pos]
+	j := pos + 1
+	for j < len(s) {
+		if s[j] == '\\' && j+1 < len(s) {
+			j += 2
+			continue
+		}
+		if s[j] == quote {
+			if j+1 < len(s) && s[j+1] == quote {
+				j += 2
+				continue
+			}
+			return j + 1
+		}
+		j++
+	}
+	return j
+}
+
+// scanBracketIdentifier advances past a T-SQL bracket-quoted identifier
+// starting at position pos in s, where s[pos] == '['. Returns the index
+// immediately after the closing ']'. Recognises the ']]' doubled-bracket
+// escape; if the identifier is unterminated, returns len(s).
+func scanBracketIdentifier(s string, pos int) int {
+	j := pos + 1
+	for j < len(s) {
+		if s[j] == ']' {
+			if j+1 < len(s) && s[j+1] == ']' {
+				j += 2
+				continue
+			}
+			return j + 1
+		}
+		j++
+	}
+	return j
+}

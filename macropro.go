@@ -83,8 +83,27 @@ func StripComments(query string, style CommentStyle) string {
 		c := query[i]
 		switch {
 		case c == '\'' || c == '"':
-			// Single- or double-quoted literal (handles '' and "" escapes).
+			// Single- or double-quoted literal (handles '' and "" escapes,
+			// plus backslash escapes when BackslashEscape is set).
+			var j int
+			if style&BackslashEscape != 0 {
+				j = scanStringLiteralBackslash(query, i)
+			} else {
+				j = scanStringLiteral(query, i)
+			}
+			b.WriteString(query[i:j])
+			i = j
+
+		case style&BacktickQuote != 0 && c == '`':
+			// MySQL backtick-quoted identifier. The doubled-backtick escape
+			// has the same shape as '' / "", so scanStringLiteral handles it.
 			j := scanStringLiteral(query, i)
+			b.WriteString(query[i:j])
+			i = j
+
+		case style&BracketQuote != 0 && c == '[':
+			// T-SQL bracket-quoted identifier, with ']]' as the closing escape.
+			j := scanBracketIdentifier(query, i)
 			b.WriteString(query[i:j])
 			i = j
 
@@ -242,7 +261,7 @@ func scanNeedles(style CommentStyle) string {
 	}
 
 	var b strings.Builder
-	b.Grow(6)
+	b.Grow(8)
 	b.WriteByte('\'')
 	b.WriteByte('"')
 	if style&LineComment != 0 {
@@ -256,6 +275,12 @@ func scanNeedles(style CommentStyle) string {
 	}
 	if style&DollarQuote != 0 {
 		b.WriteByte('$')
+	}
+	if style&BacktickQuote != 0 {
+		b.WriteByte('`')
+	}
+	if style&BracketQuote != 0 {
+		b.WriteByte('[')
 	}
 	return b.String()
 }

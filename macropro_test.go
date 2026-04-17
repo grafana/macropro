@@ -1,6 +1,15 @@
 package macropro
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// blankRange returns q with the byte range [lo,hi) replaced by spaces.
+// Used to build expected output for length-preserving StripComments tests.
+func blankRange(q string, lo, hi int) string {
+	return q[:lo] + strings.Repeat(" ", hi-lo) + q[hi:]
+}
 
 func TestStripComments_lineComment(t *testing.T) {
 	q := "SELECT 1 -- this is a comment\nFROM t"
@@ -109,4 +118,240 @@ func containsMacro(s string) bool {
 		}
 	}
 	return false
+}
+
+// TestStripComments_dialectCases covers the quote-aware comment-stripping
+// scenarios from grafana/grafana PR #121535 (MySQL) and PR #121772
+// (PostgreSQL, MSSQL). Each case asserts that StripComments either strips
+// the intended comment region OR leaves quoted regions verbatim.
+//
+// macropro.StripComments is length-preserving: stripped regions become runs
+// of spaces of equal byte length, so `want` is built from `input` by blanking
+// a specific byte range.
+func TestStripComments_dialectCases(t *testing.T) {
+	// Standard comment-stripping (PostgreSQL- and MSSQL-compatible subset).
+	t.Run("standard", func(t *testing.T) {
+		style := LineComment | BlockComment
+		cases := []struct {
+			name  string
+			input string
+			want  string
+		}{
+			{
+				"line comment stripped",
+				"SELECT 1 -- a comment",
+				blankRange("SELECT 1 -- a comment", 9, 21),
+			},
+			{
+				"block comment stripped",
+				"SELECT /* a comment */ 1",
+				blankRange("SELECT /* a comment */ 1", 7, 22),
+			},
+			{
+				"multiline block comment stripped",
+				"SELECT /*\n  multiline\n  comment\n*/ 1",
+				blankRange("SELECT /*\n  multiline\n  comment\n*/ 1", 7, 34),
+			},
+			{
+				"line comment inside single-quoted string preserved",
+				"SELECT '-- not a comment' AS label",
+				"SELECT '-- not a comment' AS label",
+			},
+			{
+				"block comment inside single-quoted string preserved",
+				"SELECT '/* not a comment */' AS label",
+				"SELECT '/* not a comment */' AS label",
+			},
+			{
+				"line comment inside double-quoted identifier preserved",
+				`SELECT "col -- name" FROM t`,
+				`SELECT "col -- name" FROM t`,
+			},
+			{
+				"block comment inside double-quoted identifier preserved",
+				`SELECT "col /* name */" FROM t`,
+				`SELECT "col /* name */" FROM t`,
+			},
+			{
+				"doubled-quote escape inside single-quoted string",
+				"SELECT 'it''s fine -- not a comment' AS v",
+				"SELECT 'it''s fine -- not a comment' AS v",
+			},
+			{
+				"doubled-quote escape inside double-quoted identifier",
+				`SELECT "col ""-- name""" FROM t`,
+				`SELECT "col ""-- name""" FROM t`,
+			},
+			{
+				"mixed: -- inside string then real -- comment",
+				"SELECT '-- in string' AS a -- real comment",
+				blankRange("SELECT '-- in string' AS a -- real comment", 27, 42),
+			},
+			{
+				"mixed: block comment inside string then real block comment",
+				"SELECT '/* in string */' AS a /* real comment */",
+				blankRange("SELECT '/* in string */' AS a /* real comment */", 30, 48),
+			},
+			{
+				"no-op: query with no comments",
+				"SELECT col FROM t WHERE col > 1",
+				"SELECT col FROM t WHERE col > 1",
+			},
+			{
+				"newline after line comment preserved",
+				"SELECT 1 -- comment\nFROM t",
+				blankRange("SELECT 1 -- comment\nFROM t", 9, 19),
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := StripComments(tc.input, style)
+				if got != tc.want {
+					t.Errorf("\ninput %q\ngot   %q\nwant  %q", tc.input, got, tc.want)
+				}
+			})
+		}
+	})
+
+	// PostgreSQL: adds dollar-quoted strings to the standard set.
+	t.Run("postgresql", func(t *testing.T) {
+		style := LineComment | BlockComment | DollarQuote
+		cases := []struct {
+			name  string
+			input string
+			want  string
+		}{
+			{
+				"line comment inside empty dollar-quoted string preserved",
+				"SELECT $$ -- not a comment $$",
+				"SELECT $$ -- not a comment $$",
+			},
+			{
+				"block comment inside empty dollar-quoted string preserved",
+				"SELECT $$ /* not a comment */ $$",
+				"SELECT $$ /* not a comment */ $$",
+			},
+			{
+				"line comment inside tagged dollar-quoted string preserved",
+				"SELECT $body$ -- not a comment $body$",
+				"SELECT $body$ -- not a comment $body$",
+			},
+			{
+				"grafana macro not confused with dollar-quote",
+				"SELECT $__timeFrom() -- comment",
+				blankRange("SELECT $__timeFrom() -- comment", 21, 31),
+			},
+			{
+				"positional parameter not confused with dollar-quote",
+				"SELECT $1 -- comment",
+				blankRange("SELECT $1 -- comment", 10, 20),
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := StripComments(tc.input, style)
+				if got != tc.want {
+					t.Errorf("\ninput %q\ngot   %q\nwant  %q", tc.input, got, tc.want)
+				}
+			})
+		}
+	})
+
+	// MySQL: adds hash-comment, backtick identifiers, and backslash escapes.
+	t.Run("mysql", func(t *testing.T) {
+		style := LineComment | BlockComment | HashComment | BacktickQuote | BackslashEscape
+		cases := []struct {
+			name  string
+			input string
+			want  string
+		}{
+			{
+				"strips hash comments",
+				"SELECT 1 # hash comment\nFROM t",
+				blankRange("SELECT 1 # hash comment\nFROM t", 9, 23),
+			},
+			{
+				"preserves # inside single-quoted string",
+				`SELECT JSON_UNQUOTE(JSON_EXTRACT(t.properties, '$."Claim #"')) AS claim`,
+				`SELECT JSON_UNQUOTE(JSON_EXTRACT(t.properties, '$."Claim #"')) AS claim`,
+			},
+			{
+				"preserves # inside double-quoted string",
+				`SELECT "col#name" FROM t`,
+				`SELECT "col#name" FROM t`,
+			},
+			{
+				"preserves # inside backtick-quoted identifier",
+				"SELECT `Claim #` FROM t",
+				"SELECT `Claim #` FROM t",
+			},
+			{
+				"handles backslash-escaped quote inside string",
+				`SELECT 'it\'s a #test' FROM t`,
+				`SELECT 'it\'s a #test' FROM t`,
+			},
+			{
+				"handles doubled quotes inside strings",
+				"SELECT 'it''s a #test' FROM t",
+				"SELECT 'it''s a #test' FROM t",
+			},
+			{
+				"real-world JSON path with hash regression",
+				"SELECT\n  JSON_UNQUOTE(JSON_EXTRACT(t.properties, '$.\"Claim #\"')) AS `Claim Number`\nFROM repairshopr.tickets t\nWHERE t.status = 'Resolved'",
+				"SELECT\n  JSON_UNQUOTE(JSON_EXTRACT(t.properties, '$.\"Claim #\"')) AS `Claim Number`\nFROM repairshopr.tickets t\nWHERE t.status = 'Resolved'",
+			},
+			{
+				"hash comment after quoted string with hash",
+				"SELECT 'Claim #' # this is a comment\nFROM t",
+				blankRange("SELECT 'Claim #' # this is a comment\nFROM t", 17, 36),
+			},
+			{
+				"doubled-backtick escape inside backtick identifier",
+				"SELECT `col``name` FROM t",
+				"SELECT `col``name` FROM t",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := StripComments(tc.input, style)
+				if got != tc.want {
+					t.Errorf("\ninput %q\ngot   %q\nwant  %q", tc.input, got, tc.want)
+				}
+			})
+		}
+	})
+
+	// MSSQL: adds T-SQL bracket-quoted identifiers to the standard set.
+	t.Run("mssql", func(t *testing.T) {
+		style := LineComment | BlockComment | BracketQuote
+		cases := []struct {
+			name  string
+			input string
+			want  string
+		}{
+			{
+				"line comment inside bracket-quoted identifier preserved",
+				"SELECT [col -- name] FROM t",
+				"SELECT [col -- name] FROM t",
+			},
+			{
+				"block comment inside bracket-quoted identifier preserved",
+				"SELECT [col /* name */] FROM t",
+				"SELECT [col /* name */] FROM t",
+			},
+			{
+				"doubled-bracket escape inside bracket identifier",
+				"SELECT [col]]name] FROM t",
+				"SELECT [col]]name] FROM t",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := StripComments(tc.input, style)
+				if got != tc.want {
+					t.Errorf("\ninput %q\ngot   %q\nwant  %q", tc.input, got, tc.want)
+				}
+			})
+		}
+	})
 }

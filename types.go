@@ -55,6 +55,24 @@ const (
 	DollarQuote
 	// SlashComment strips // line comments (Flux-style).
 	SlashComment
+	// BacktickQuote preserves MySQL backtick-quoted identifiers (`col name`),
+	// treating a doubled backtick (``) as the in-identifier escape. Without
+	// this flag, comment-like sequences inside backticks (e.g. `Claim #`)
+	// would be incorrectly stripped.
+	BacktickQuote
+	// BracketQuote preserves T-SQL bracket-quoted identifiers ([col name]),
+	// treating a doubled closing bracket (]]) as the in-identifier escape.
+	// Without this flag, comment-like sequences inside brackets would be
+	// incorrectly stripped. Do NOT set this flag when targeting PostgreSQL or
+	// other dialects that use [ for array access.
+	BracketQuote
+	// BackslashEscape treats \<x> as a two-byte escape inside single- and
+	// double-quoted string regions, so that a literal quote introduced by \'
+	// or \" does not end the string early. Required for MySQL's default
+	// NO_BACKSLASH_ESCAPES=OFF mode. NOT suitable for PostgreSQL with
+	// standard_conforming_strings=on (the default since 9.1), which rejects
+	// backslash escapes in regular string literals.
+	BackslashEscape
 )
 
 // Option configures the behaviour of [Interpolate]. Options are applied in

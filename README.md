@@ -227,15 +227,28 @@ result, err := macropro.Interpolate(clean, macros, ctx)
 
 Available `CommentStyle` flags:
 
-| Flag | Strips |
+| Flag | Strips / preserves |
 |---|---|
-| `LineComment` | `-- …` until end of line |
-| `BlockComment` | `/* … */` |
-| `HashComment` | `# …` until end of line (MySQL-style) |
-| `SlashComment` | `// …` until end of line (Flux-style) |
+| `LineComment` | Strips `-- …` until end of line |
+| `BlockComment` | Strips `/* … */` |
+| `HashComment` | Strips `# …` until end of line (MySQL-style) |
+| `SlashComment` | Strips `// …` until end of line (Flux-style) |
 | `DollarQuote` | Preserves PostgreSQL `$tag$…$tag$` dollar-quoted strings |
+| `BacktickQuote` | Preserves MySQL `` `col name` `` backtick identifiers (with `` `` `` escape) |
+| `BracketQuote` | Preserves T-SQL `[col name]` bracket identifiers (with `]]` escape) |
+| `BackslashEscape` | Treats `\x` as a two-byte escape inside `'…'` and `"…"` — required for MySQL with `NO_BACKSLASH_ESCAPES=OFF` (the default) |
 
 Flags can be combined with `\|`. Pass `0` to strip nothing.
+
+Dialect recipes:
+
+| Dialect | Style |
+|---|---|
+| Generic SQL (default) | `LineComment \| BlockComment` |
+| PostgreSQL | `LineComment \| BlockComment \| DollarQuote` |
+| MySQL | `LineComment \| BlockComment \| HashComment \| BacktickQuote \| BackslashEscape` |
+| MSSQL / T-SQL | `LineComment \| BlockComment \| BracketQuote` |
+| InfluxDB Flux | `SlashComment \| BlockComment` |
 
 ## Options
 
@@ -361,7 +374,7 @@ The library is **not** safe if you:
 
 These are **not** security boundaries, but are worth understanding when reasoning about what the parser treats as a macro vs. what it leaves alone:
 
-- Quote tracking recognises SQL-style doubled-quote escapes (`''`, `""`) in `StripComments`, but not backslash escapes (`\'`). MySQL by default supports both, so a macro token appearing inside a backslash-escaped string can still be expanded. Callers targeting MySQL-like dialects should pre-sanitise or disable comment stripping if this matters.
+- Quote tracking in `StripComments` recognises SQL-standard doubled-quote escapes (`''`, `""`) by default. Backslash escapes (`\'`, `\"`) are only honoured when `BackslashEscape` is set — callers targeting MySQL's default `NO_BACKSLASH_ESCAPES=OFF` mode must include the flag, or a macro token appearing after a backslash-escaped quote can be misparsed.
 - Error messages returned by `Interpolate` may include raw argument text from the query. If those errors are logged, treat them as query fragments (potentially sensitive) and scrub accordingly.
 
 ## License
