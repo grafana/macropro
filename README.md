@@ -1,5 +1,9 @@
 # macropro
 
+[![CI](https://github.com/grafana/macropro/actions/workflows/ci.yml/badge.svg)](https://github.com/grafana/macropro/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/grafana/macropro.svg)](https://pkg.go.dev/github.com/grafana/macropro)
+[![Go Report Card](https://goreportcard.com/badge/github.com/grafana/macropro)](https://goreportcard.com/report/github.com/grafana/macropro)
+
 A generic, language-agnostic Go library for parsing and expanding [Grafana macros](https://grafana.com/docs/grafana/latest/datasources/mysql/query-editor/#macros) in query strings.
 
 Grafana macros take the form `$__name` or `$__name(arg1, arg2, …)` and are expanded at query time to inject dynamic values — time ranges, grouping intervals, table names, and so on. `macropro` provides the parsing engine and a set of dialect-neutral defaults; datasource backends register their own handlers on top.
