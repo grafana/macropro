@@ -18,6 +18,12 @@ import (
 // never evaluated. Callers that also need MySQL-style hash comment stripping
 // (#) should call [StripComments] with [HashComment] before calling Interpolate.
 //
+// A trailing SQLCommenter (https://google.github.io/sqlcommenter/) attribution
+// tag such as /*application='grafana',source='bi'*/ is the one exception:
+// it is split off via [SplitTrailingSQLCommenter] before stripping and
+// re-appended verbatim after expansion, so query-tagging metadata reaches the
+// database while macros inside the tag are still never evaluated.
+//
 // The default "$__" prefix and SQL comment styles can be overridden via
 // [WithPrefix] and [WithComments] — useful for non-SQL query languages like
 // InfluxDB Flux or for datasources with legacy macro syntaxes.
@@ -43,12 +49,24 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 	// copy is held in `work`; `query` retains the caller's original bytes so
 	// they can be returned untouched on error.
 	work := query
+
+	// A trailing SQLCommenter attribution tag must reach the database
+	// verbatim, so split it off before stripping and re-append it after
+	// expansion. This keeps it out of comment stripping and macro
+	// substitution, and prevents a macro from completing across the comment
+	// boundary in either direction. Only relevant when block comments would
+	// otherwise be stripped; with stripping disabled the tag survives anyway.
+	var commenterTag string
+	if o.comments&BlockComment != 0 {
+		work, commenterTag = SplitTrailingSQLCommenter(work, o.comments)
+	}
+
 	if o.comments != 0 {
 		// If the prefix never appears in the raw input, no amount of comment
 		// stripping can make it appear — StripComments only blanks regions,
 		// it never introduces prefix bytes. Skip stripping AND scanning.
-		if !strings.Contains(query, o.prefix) {
-			return query, nil
+		if !strings.Contains(work, o.prefix) {
+			return work + commenterTag, nil
 		}
 		work = StripComments(work, o.comments)
 	}
@@ -57,7 +75,7 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 	// that StripComments just blanked out. If no prefix remains, there is
 	// nothing to expand — return work without allocating a Builder.
 	if !strings.Contains(work, o.prefix) {
-		return work, nil
+		return work + commenterTag, nil
 	}
 
 	// Single forward scan: find each prefix occurrence, read the macro name
@@ -129,7 +147,7 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 		i = after
 	}
 
-	return b.String(), nil
+	return b.String() + commenterTag, nil
 }
 
 // MergeMacros returns a new MacroMap with every entry from base, with entries
