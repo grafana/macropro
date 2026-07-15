@@ -100,7 +100,13 @@ type MacroFunc func(query *sqlutil.Query, args []string) (string, error)
 type MacroFunc[T any] func(ctx QueryContext[T], args []string) (string, error)
 ```
 
-The recommended pattern keeps `sqlds.Driver` for query execution and framing but replaces its interpolation engine entirely: expand macros upstream in the driver's `MutateQueryData` hook, then return an empty `sqlds.Macros{}` from `Driver.Macros()` so sqlds's own scan is a no-op on already-expanded SQL.
+Since [sqlds v5.2.0](https://github.com/grafana/sqlds/pull/269), `SQLDatasource` exposes a pluggable `Interpolator` func field that owns the full SQL rewrite for each query:
+
+```go
+type Interpolator func(ctx context.Context, query *sqlutil.Query, rawJSON json.RawMessage) (string, error)
+```
+
+The recommended pattern keeps `sqlds.Driver` for query execution and framing but assigns a macropro-backed `Interpolator`, replacing sqlds's built-in macro scan entirely. Errors returned from the interpolator propagate through the normal query path as first-class query errors.
 
 ### Step 1 — Bridge `*sqlutil.Query` to `QueryContext`
 
@@ -121,7 +127,7 @@ func contextFrom(q *sqlutil.Query) macropro.QueryContext[struct{}] {
 }
 ```
 
-If your datasource needs extra context (e.g. a database name, cluster ID), define an `Extra` struct and populate it here.
+If your datasource needs extra context (e.g. a database name, cluster ID), define an `Extra` struct — Step 3 shows how to populate it from the raw query JSON.
 
 ### Step 2 — Define handlers and expose an `Interpolate` function
 
@@ -143,65 +149,41 @@ func Interpolate(rawSQL string, q *sqlutil.Query) (string, error) {
 }
 ```
 
-### Step 3 — Expand macros in `MutateQueryData`, return empty sqlds.Macros
+### Step 3 — Assign the `Interpolator`
 
-In the `sqlds.Driver`, rewrite each query's `rawSql` before sqlds sees it, and report no macros so sqlds does not scan a second time:
+In your datasource factory, assign the macropro-backed func after constructing the `SQLDatasource`. sqlds calls it once per query and passes the expanded SQL straight to the driver:
 
 ```go
-// Macros satisfies sqlds.Driver. Returning an empty map disables sqlds's own
-// macro scan; macros are fully expanded by the time sqlds receives the query.
+// Macros satisfies sqlds.Driver but is only consulted by sqlds's default
+// interpolator, which the assignment below replaces.
 func (d *Driver) Macros() sqlds.Macros { return sqlds.Macros{} }
 
-func (d *Driver) MutateQueryData(ctx context.Context, req backend.QueryDataRequest) (context.Context, backend.QueryDataRequest) {
-    for i, q := range req.Queries {
-        req.Queries[i] = expandMacrosInQuery(q)
+func newDatasource(ctx context.Context, settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+    ds := sqlds.NewDatasource(&Driver{})
+    ds.Interpolator = func(_ context.Context, q *sqlutil.Query, _ json.RawMessage) (string, error) {
+        return Interpolate(q.RawSQL, q)
     }
-    return ctx, req
-}
-
-func expandMacrosInQuery(q backend.DataQuery) backend.DataQuery {
-    var sqq sqlutil.Query
-    if err := json.Unmarshal(q.JSON, &sqq); err != nil {
-        return q
-    }
-    if sqq.RawSQL == "" {
-        return q
-    }
-    sqq.TimeRange = q.TimeRange
-    sqq.Interval = q.Interval
-
-    expanded, err := Interpolate(sqq.RawSQL, &sqq)
-    if err != nil {
-        backend.Logger.Error("macro expansion failed", "refId", q.RefID, "error", err)
-        return q
-    }
-    if expanded == sqq.RawSQL {
-        return q
-    }
-
-    // Round-trip through a raw map so plugin-specific JSON fields
-    // (meta.timezone, format, etc.) are preserved verbatim.
-    var raw map[string]json.RawMessage
-    if err := json.Unmarshal(q.JSON, &raw); err != nil {
-        return q
-    }
-    newRawSQL, err := json.Marshal(expanded)
-    if err != nil {
-        return q
-    }
-    raw["rawSql"] = newRawSQL
-    newJSON, err := json.Marshal(raw)
-    if err != nil {
-        return q
-    }
-    q.JSON = newJSON
-    return q
+    return ds.NewDatasource(ctx, settings)
 }
 ```
 
-Why not keep sqlds's built-in macro handling? sqlds delegates to `sqlutil`'s defaults, several of which emit SQL that is not valid in every dialect — `$__timeGroup` produces SQL-Server-style `datepart()` calls, `$__timeFrom`/`$__timeTo` emit RFC 3339 string literals that rely on implicit string→DateTime coercion. Expanding with your own `MacroMap` upstream lets you override those defaults with dialect-correct output and drop the `sqlds`-side macro wiring entirely.
+The `rawJSON` argument carries the unparsed query JSON from the request — `sqlutil.Query` only parses its fixed fields and drops the rest — so it is the channel for plugin-defined macro context. Unmarshal it into your `Extra` struct:
 
-Expansion errors cannot be returned from `MutateQueryData`, so the handler logs the error and passes the original query through unchanged; the database then rejects it with its normal syntax error. If you need first-class error reporting, expand in a `CallResource` or custom query path instead.
+```go
+ds.Interpolator = func(_ context.Context, q *sqlutil.Query, rawJSON json.RawMessage) (string, error) {
+    mctx := contextFrom(q)
+    if err := json.Unmarshal(rawJSON, &mctx.Extra); err != nil {
+        return "", fmt.Errorf("parsing query JSON: %w", err)
+    }
+    return macropro.Interpolate(q.RawSQL, MyMacros, mctx)
+}
+```
+
+Why not keep sqlds's built-in macro handling? sqlds delegates to `sqlutil`'s defaults, several of which emit SQL that is not valid in every dialect — `$__timeGroup` produces SQL-Server-style `datepart()` calls, `$__timeFrom`/`$__timeTo` emit RFC 3339 string literals that rely on implicit string→DateTime coercion. Replacing the pipeline with your own `MacroMap` lets you override those defaults with dialect-correct output and drop the `sqlds`-side macro wiring entirely.
+
+### Older sqlds versions
+
+On sqlds versions before v5.2.0 there is no `Interpolator` field. The closest equivalent is to expand macros upstream in the driver's `MutateQueryData` hook — round-tripping each query's JSON to rewrite `rawSql` — and return an empty `sqlds.Macros{}` so sqlds's own scan is a no-op on already-expanded SQL. That hook cannot return errors, so expansion failures can only be logged and passed through. Prefer upgrading sqlds and using the `Interpolator` field.
 
 ## Default macros
 
