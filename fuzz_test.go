@@ -30,7 +30,7 @@ func FuzzInterpolate(f *testing.F) {
 
 	macros := MacroMap[struct{}]{
 		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {
-			return "[" + args[0] + "]", nil // panics on zero args; must be recovered
+			return "[" + args[0] + "]", nil // panics on zero args, which must be recovered
 		},
 		"x": func(_ QueryContext[struct{}], _ []string) (string, error) {
 			return "1", nil

@@ -674,8 +674,8 @@ func TestInterpolate_errorReturnsOriginalOnPanic(t *testing.T) {
 // another macro (e.g. $__timeInterval($__fromTime)) must be expanded before
 // the outer handler is invoked. The single-pass scanner used to jump over the
 // whole outer call, so the inner token reached the database verbatim.
-// Semantics: arguments are expanded innermost-first; handler OUTPUT is never
-// rescanned.
+// Semantics: arguments are expanded innermost-first, and handler OUTPUT is
+// never rescanned.
 
 // nestedTestMacros returns a MacroMap mirroring the clickhouse-datasource
 // shape that triggered the regression: a zero-arg time macro nested inside a
@@ -743,7 +743,7 @@ func TestInterpolate_nestedMacroDeep(t *testing.T) {
 
 func TestInterpolate_nestedMacroInExpression(t *testing.T) {
 	// The nested macro sits inside a larger SQL expression within the
-	// argument; the surrounding expression text must be preserved.
+	// argument. The surrounding expression text must be preserved.
 	macros := MacroMap[struct{}]{
 		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {
 			return "[" + args[0] + "]", nil
@@ -801,9 +801,9 @@ func TestInterpolate_nestedMacroSecondArg(t *testing.T) {
 
 func TestInterpolate_nestedExpansionDoesNotChangeArity(t *testing.T) {
 	// Argument boundaries are fixed BEFORE nested expansion: an expansion
-	// containing a comma must not re-split the argument list. (The old
-	// sqlutil engine could re-split here depending on pass order; fixed
-	// boundaries are a deliberate choice, not a compatibility bug.)
+	// containing a comma must not re-split the argument list. The old
+	// sqlutil engine could re-split here depending on pass order, so fixed
+	// boundaries are a deliberate choice, not a compatibility bug.
 	var gotArgs []string
 	macros := MacroMap[struct{}]{
 		"outer": func(_ QueryContext[struct{}], args []string) (string, error) {
@@ -867,12 +867,13 @@ func TestInterpolate_nestedHandlerErrorReturnsOriginal(t *testing.T) {
 }
 
 func TestInterpolate_nestedHandlerOutputNotRescanned(t *testing.T) {
-	// Handler OUTPUT is spliced verbatim, never rescanned — a handler that
-	// emits a macro token cannot trigger further expansion. This bounds the
-	// work to the input text and closes the door on expansion loops. It is a
-	// DELIBERATE divergence from the old sqlutil engine, whose sequential
-	// per-name passes could expand handler output depending on pass order;
-	// that order-dependent behaviour is intentionally not preserved.
+	// Handler OUTPUT is spliced verbatim and never rescanned, so a handler
+	// that emits a macro token cannot trigger further expansion. This bounds
+	// the work to the input text and closes the door on expansion loops. It
+	// is a DELIBERATE divergence from the old sqlutil engine, whose
+	// sequential per-name passes could expand handler output depending on
+	// pass order. That order-dependent behaviour is intentionally not
+	// preserved.
 	macros := MacroMap[struct{}]{
 		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {
 			return "[" + args[0] + "]", nil
@@ -947,8 +948,8 @@ func TestInterpolate_nestedZeroArgParens(t *testing.T) {
 }
 
 func TestInterpolate_nestedInsideStringLiteralArg(t *testing.T) {
-	// The top-level scanner expands macro tokens inside string literals;
-	// nested expansion must behave identically for consistency.
+	// The top-level scanner expands macro tokens inside string literals.
+	// Nested expansion must behave identically for consistency.
 	macros := MacroMap[struct{}]{
 		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {
 			return "[" + args[0] + "]", nil
@@ -992,7 +993,7 @@ func TestInterpolate_nestedCallInCommentNotExpanded(t *testing.T) {
 func TestInterpolate_knownMacroInsideUnknownMacroArgs(t *testing.T) {
 	// The unknown-macro branch copies only prefix+name and keeps scanning, so
 	// an argument list after an unknown macro is ordinary text and known
-	// macros inside it still expand — in both directions of nesting.
+	// macros inside it still expand, in both directions of nesting.
 	var gotArgs []string
 	macros := MacroMap[struct{}]{
 		"known": func(_ QueryContext[struct{}], args []string) (string, error) {
@@ -1021,9 +1022,9 @@ func TestInterpolate_knownMacroInsideUnknownMacroArgs(t *testing.T) {
 }
 
 func TestInterpolate_nestedMacrosInMultipleArgs(t *testing.T) {
-	// Nested macros in two DIFFERENT args of the same call — pins that the
-	// per-arg expansion loop covers every argument, not just the first or
-	// last one containing the prefix.
+	// Nested macros in two DIFFERENT args of the same call. This pins that
+	// the per-arg expansion loop covers every argument, not just the first
+	// or last one containing the prefix.
 	var gotArgs []string
 	macros := MacroMap[struct{}]{
 		"pair": func(_ QueryContext[struct{}], args []string) (string, error) {
@@ -1076,7 +1077,7 @@ func TestInterpolate_nestedDepthLimitBoundary(t *testing.T) {
 
 func TestInterpolate_wideShallowNestingUnderLimit(t *testing.T) {
 	// maxNestingDepth bounds per-branch recursion depth, not a cumulative
-	// expansion counter — many shallow nested calls side by side must all
+	// expansion counter, so many shallow nested calls side by side must all
 	// expand, as in a realistic macro-heavy dashboard query.
 	macros := MacroMap[struct{}]{
 		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {
@@ -1143,8 +1144,8 @@ func TestInterpolate_nestedErrorNamesArgumentPosition(t *testing.T) {
 // pin down per dialect.
 
 func TestInterpolate_nestedMySQLHashComment(t *testing.T) {
-	// MySQL: # line comments hide a nested call; an uncommented nested call
-	// on the same input still expands.
+	// MySQL: # line comments hide a nested call, while an uncommented nested
+	// call on the same input still expands.
 	hiddenCalled := false
 	macros := MacroMap[struct{}]{
 		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {

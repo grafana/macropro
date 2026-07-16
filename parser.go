@@ -8,7 +8,7 @@ import (
 
 // maxNestingDepth bounds recursive expansion of macros nested inside macro
 // arguments. Expansion only ever recurses into input text (never handler
-// output), so the depth is naturally bounded by the input length; the cap
+// output), so the depth is naturally bounded by the input length. The cap
 // turns a pathological deeply-nested input into a clean error instead of an
 // arbitrarily deep call stack.
 const maxNestingDepth = 128
@@ -84,14 +84,14 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 
 // expand performs the scan-and-splice over work, which has already had
 // comments stripped and options resolved. It recurses into macro arguments
-// that contain the prefix so that nested macros expand innermost-first; depth
-// guards that recursion.
+// that contain the prefix so that nested macros expand innermost-first. The
+// depth parameter guards that recursion.
 //
 // Single forward scan: find each prefix occurrence, read the macro name
 // greedily at the natural word boundary, and dispatch via map lookup. Greedy
 // name-reading inherently prevents $__interval from matching inside
-// $__interval_ms — the scanner always consumes the longest valid name before
-// consulting the map, so no longest-first sort is required.
+// $__interval_ms, because the scanner always consumes the longest valid name
+// before consulting the map, so no longest-first sort is required.
 func expand[T any](work string, macros MacroMap[T], ctx QueryContext[T], o options, depth int) (string, error) {
 	if depth > maxNestingDepth {
 		return "", fmt.Errorf("macro nesting exceeds %d levels", maxNestingDepth)
@@ -131,7 +131,7 @@ func expand[T any](work string, macros MacroMap[T], ctx QueryContext[T], o optio
 		name := work[nameStart:nameEnd]
 		fn, ok := macros[name]
 		if !ok {
-			// Unknown macro — copy prefix+name through and advance. Any
+			// Unknown macro: copy prefix+name through and advance. Any
 			// argument list that follows is scanned as ordinary text, so
 			// known macros inside it still expand.
 			b.WriteString(work[i:nameEnd])
