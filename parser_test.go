@@ -1446,3 +1446,33 @@ func TestInterpolate_preservesTrailingSQLCommenterTag(t *testing.T) {
 		})
 	}
 }
+
+// TestInterpolate_nestedMacrosWithTrailingSQLCommenterTag pins the interaction
+// of nested-argument expansion and SQLCommenter tag preservation: the tag must
+// be re-appended exactly once, at the end of the fully expanded query, and
+// never inside expanded argument values (expansion recurses per argument, so
+// appending the tag at each recursion level would duplicate it).
+func TestInterpolate_nestedMacrosWithTrailingSQLCommenterTag(t *testing.T) {
+	macros := MacroMap[struct{}]{
+		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {
+			return "WRAP(" + strings.Join(args, ", ") + ")", nil
+		},
+		"inner": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return "42", nil
+		},
+	}
+
+	query := "SELECT $__wrap($__inner, $__inner) FROM t /*application='grafana'*/"
+	want := "SELECT WRAP(42, 42) FROM t /*application='grafana'*/"
+
+	got, err := Interpolate(query, macros, QueryContext[struct{}]{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
+	}
+	if n := strings.Count(got, "/*application='grafana'*/"); n != 1 {
+		t.Errorf("tag appended %d times, want exactly 1", n)
+	}
+}

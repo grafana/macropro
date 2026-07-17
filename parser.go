@@ -98,7 +98,10 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 	if err != nil {
 		return query, err
 	}
-	return out, nil
+	// Re-append the SQLCommenter tag here rather than in expand: expand
+	// recurses into macro arguments, and appending at every recursion level
+	// would duplicate the tag inside expanded argument values.
+	return out + commenterTag, nil
 }
 
 // expand performs the scan-and-splice over work, which has already had
@@ -195,7 +198,7 @@ func expand[T any](work string, macros MacroMap[T], ctx QueryContext[T], o optio
 		i = after
 	}
 
-	return b.String() + commenterTag, nil
+	return b.String(), nil
 }
 
 // MergeMacros returns a new MacroMap with every entry from base, with entries
