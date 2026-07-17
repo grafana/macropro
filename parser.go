@@ -161,10 +161,13 @@ func expand[T any](work string, macros MacroMap[T], ctx QueryContext[T], o optio
 			continue
 		}
 
-		// Consume an optional argument list.
+		// Consume an optional argument list, unless the macro is declared
+		// zero-argument via [WithZeroArgMacros], in which case a following
+		// '(' is ordinary text belonging to the surrounding language.
 		raw := ""
 		after := nameEnd
-		if after < len(work) && work[after] == '(' {
+		_, zeroArg := o.zeroArg[name]
+		if !zeroArg && after < len(work) && work[after] == '(' {
 			end, err := findClosingParen(work, after)
 			if err == nil {
 				raw = work[after+1 : end]
