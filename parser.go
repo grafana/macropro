@@ -6,12 +6,27 @@ import (
 	"strings"
 )
 
+// maxNestingDepth bounds recursive expansion of macros nested inside macro
+// arguments. Expansion only ever recurses into input text (never handler
+// output), so the depth is naturally bounded by the input length. The cap
+// turns a pathological deeply-nested input into a clean error instead of an
+// arbitrarily deep call stack.
+const maxNestingDepth = 128
+
 // Interpolate scans query for all $__<name>(…) tokens whose names appear in
 // macros, calls the corresponding MacroFunc, and splices the returned string
 // back in place.
 //
 // Macro names are matched longest-first so that $__interval_ms is never
 // incorrectly matched as $__interval.
+//
+// Macro tokens nested inside another macro's argument list (e.g.
+// $__timeInterval($__fromTime)) are expanded innermost-first, so handlers
+// always receive fully expanded argument values. Argument boundaries are
+// fixed before nested expansion, so an expansion containing a comma cannot
+// change the outer macro's argument count. Handler output is spliced verbatim
+// and never rescanned for further macro tokens. Nesting is limited to
+// [maxNestingDepth] levels.
 //
 // Standard SQL line comments (--) and block comments (/* */) are stripped
 // before macro expansion so that a macro token placed inside a comment is
@@ -60,11 +75,28 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 		return work, nil
 	}
 
-	// Single forward scan: find each prefix occurrence, read the macro name
-	// greedily at the natural word boundary, and dispatch via map lookup.
-	// Greedy name-reading inherently prevents $__interval from matching inside
-	// $__interval_ms — the scanner always consumes the longest valid name
-	// before consulting the map, so no longest-first sort is required.
+	out, err := expand(work, macros, ctx, o, 0)
+	if err != nil {
+		return query, err
+	}
+	return out, nil
+}
+
+// expand performs the scan-and-splice over work, which has already had
+// comments stripped and options resolved. It recurses into macro arguments
+// that contain the prefix so that nested macros expand innermost-first. The
+// depth parameter guards that recursion.
+//
+// Single forward scan: find each prefix occurrence, read the macro name
+// greedily at the natural word boundary, and dispatch via map lookup. Greedy
+// name-reading inherently prevents $__interval from matching inside
+// $__interval_ms, because the scanner always consumes the longest valid name
+// before consulting the map, so no longest-first sort is required.
+func expand[T any](work string, macros MacroMap[T], ctx QueryContext[T], o options, depth int) (string, error) {
+	if depth > maxNestingDepth {
+		return "", fmt.Errorf("macro nesting exceeds %d levels", maxNestingDepth)
+	}
+
 	prefix := o.prefix
 	var b strings.Builder
 	b.Grow(len(work))
@@ -99,7 +131,9 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 		name := work[nameStart:nameEnd]
 		fn, ok := macros[name]
 		if !ok {
-			// Unknown macro — copy prefix+name through and advance.
+			// Unknown macro: copy prefix+name through and advance. Any
+			// argument list that follows is scanned as ordinary text, so
+			// known macros inside it still expand.
 			b.WriteString(work[i:nameEnd])
 			i = nameEnd
 			continue
@@ -119,11 +153,24 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 
 		args, err := parseArgs(raw)
 		if err != nil {
-			return query, fmt.Errorf("macro %s%s: %w", prefix, name, err)
+			return "", fmt.Errorf("macro %s%s: %w", prefix, name, err)
+		}
+		// Expand macros nested inside the arguments before invoking the
+		// handler, so a macro used as an argument (e.g.
+		// $__timeInterval($__fromTime)) reaches the handler fully expanded.
+		for ai, arg := range args {
+			if !strings.Contains(arg, prefix) {
+				continue
+			}
+			expanded, err := expand(arg, macros, ctx, o, depth+1)
+			if err != nil {
+				return "", fmt.Errorf("macro %s%s argument %d: %w", prefix, name, ai+1, err)
+			}
+			args[ai] = expanded
 		}
 		replacement, err := callHandler(fn, ctx, args)
 		if err != nil {
-			return query, fmt.Errorf("macro %s%s(%s): %w", prefix, name, strings.Join(args, ", "), err)
+			return "", fmt.Errorf("macro %s%s(%s): %w", prefix, name, strings.Join(args, ", "), err)
 		}
 		b.WriteString(replacement)
 		i = after

@@ -41,6 +41,18 @@ func BenchmarkInterpolate_shortNoComments(b *testing.B) {
 	}
 }
 
+// BenchmarkInterpolate_nested guards the recursive argument-expansion path
+// added for macros nested inside macro arguments: each level allocates a
+// Builder and scans every argument for the prefix.
+func BenchmarkInterpolate_nested(b *testing.B) {
+	query := "SELECT $__timeFilter($__timeFrom) FROM $__table WHERE $__timeFilter(created_at)"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		sinkString, sinkErr = Interpolate(query, benchMacros, benchCtx)
+	}
+}
+
 // BenchmarkInterpolate_longNoComments tests the H1 fast path at scale.
 // ~12 KB query with zero comments — currently allocates a full copy; once
 // the no-comment fast path lands, the copy and walk should disappear.
