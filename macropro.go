@@ -28,6 +28,12 @@
 //
 //	clean := macropro.StripComments(query, macropro.HashComment)
 //	result, err := macropro.Interpolate(clean, macros, ctx)
+//
+// A trailing SQLCommenter (https://google.github.io/sqlcommenter/) attribution
+// tag such as /*application='grafana',source='bi'*/ is preserved rather than
+// stripped: [Interpolate] splits it off with [SplitTrailingSQLCommenter]
+// before expansion and re-appends it verbatim, so query-tagging metadata
+// reaches the database while macros inside the tag are still never evaluated.
 package macropro
 
 import "strings"

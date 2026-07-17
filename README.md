@@ -211,6 +211,19 @@ clean := macropro.StripComments(query, macropro.HashComment)
 result, err := macropro.Interpolate(clean, macros, ctx)
 ```
 
+### SQLCommenter tags
+
+A trailing [SQLCommenter](https://google.github.io/sqlcommenter/) attribution tag is the one comment `Interpolate` preserves:
+
+```sql
+SELECT 1 AS value
+/*application='grafana',source='bi'*/;
+```
+
+Whenever `BlockComment` stripping is enabled, the tag is split off with `SplitTrailingSQLCommenter` before stripping and macro expansion, then re-appended verbatim, so query-tagging metadata (for example PlanetScale Insights or other observability backends) reaches the database unchanged. Because the tag never passes through expansion, a macro token inside a tag value is never evaluated, and no macro can complete across the comment boundary in either direction.
+
+Only trailing tags in strict `key='value'` form are preserved. Inline tags, plain block comments, and tag-shaped text inside a trailing line comment are still stripped like any other comment. Callers that pre-process queries with `StripComments` directly can call `SplitTrailingSQLCommenter` themselves for the same protection.
+
 Available `CommentStyle` flags:
 
 | Flag | Strips / preserves |
@@ -290,6 +303,12 @@ func DefaultMacros[T any]() MacroMap[T]
 // StripComments removes comment regions from query, replacing them with
 // spaces to preserve byte positions.
 func StripComments(query string, style CommentStyle) string
+
+// SplitTrailingSQLCommenter splits a trailing SQLCommenter attribution tag
+// off the end of query, returning the body and the tag (or query and "" when
+// there is none). style selects which line-comment markers the dialect
+// recognises. Interpolate calls this automatically when BlockComment is set.
+func SplitTrailingSQLCommenter(query string, style CommentStyle) (string, string)
 ```
 
 ### Types
