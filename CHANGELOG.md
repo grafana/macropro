@@ -1,5 +1,39 @@
 # Changelog
 
+## [1.0.1](https://github.com/grafana/macropro/compare/v1.0.0...v1.0.1) (2026-07-17)
+
+
+### 🐛 Bug Fixes
+
+* expand macros nested inside macro arguments ([#20](https://github.com/grafana/macropro/issues/20)) ([52d2492](https://github.com/grafana/macropro/commit/52d2492ec43f4b5a586ab22a500a3426268bccb8))
+
+
+### 📝 Documentation
+
+* add Apache 2.0 LICENSE ([e423b61](https://github.com/grafana/macropro/commit/e423b6100878227ad6bab6d179a885d5291aea80))
+* add CI, pkg.go.dev, and Go Report Card badges to README ([5f55898](https://github.com/grafana/macropro/commit/5f558985f6a980d36d2926537e9f7913d0f39922))
+* add CONTRIBUTING.md ([bbb74bb](https://github.com/grafana/macropro/commit/bbb74bb48d3a0438a8a1b6b1d8cfadd87e409f0b))
+* add SECURITY.md ([ee27aa5](https://github.com/grafana/macropro/commit/ee27aa5331c9132fb40dea76f95793504974ab58))
+* recommend sqlds Interpolator extension point in migration guide ([#18](https://github.com/grafana/macropro/issues/18)) ([75c285e](https://github.com/grafana/macropro/commit/75c285ea630c5200076f0313e12608e99442b585))
+
+
+### 🤖 Continuous Integration
+
+* add stale issue and PR workflow ([#19](https://github.com/grafana/macropro/issues/19)) ([cfa834d](https://github.com/grafana/macropro/commit/cfa834dd164e35e68914ea6e7f8b50dc8b1643ed))
+* drop component prefix from release-please tags ([5d21dd7](https://github.com/grafana/macropro/commit/5d21dd7177710e80d091464687ab9d88d4f2c700))
+* harden GitHub Actions workflows ([#12](https://github.com/grafana/macropro/issues/12)) ([dbfa76a](https://github.com/grafana/macropro/commit/dbfa76ad70954bd9b8e479ac15f180d86f93bf77))
+
+
+### 🔧 Chores
+
+* add `add-to-project workflow` ([#14](https://github.com/grafana/macropro/issues/14)) ([abbd352](https://github.com/grafana/macropro/commit/abbd35242ce35491575ffce971a6a0a77adc83f1))
+* add CODEOWNERS ([a411967](https://github.com/grafana/macropro/commit/a4119676938c187d7117c6a98f5e1388be3149f5))
+* **deps:** update actions/checkout action to v7 ([#13](https://github.com/grafana/macropro/issues/13)) ([681538a](https://github.com/grafana/macropro/commit/681538a9afb1ee6a287cf68e362f627eaba58d42))
+* **deps:** update actions/setup-go action to v6.5.0 ([#15](https://github.com/grafana/macropro/issues/15)) ([6f3fa7c](https://github.com/grafana/macropro/commit/6f3fa7ca36bd5003b342132dd17030a3979f2041))
+* **deps:** update dependency golangci/golangci-lint to v2.12.2 ([#9](https://github.com/grafana/macropro/issues/9)) ([8ac3db5](https://github.com/grafana/macropro/commit/8ac3db5aa0a8c09528ac9add2dc78e8015301bb5))
+* **deps:** update golangci/golangci-lint-action action to v9.3.0 ([#16](https://github.com/grafana/macropro/issues/16)) ([8e360bf](https://github.com/grafana/macropro/commit/8e360bfd5e993859ee8c11301a8502b0291f01f4))
+* **deps:** update googleapis/release-please-action action to v5 ([#10](https://github.com/grafana/macropro/issues/10)) ([47972f1](https://github.com/grafana/macropro/commit/47972f19595c0fe2b2f4fb98c0724331ec061cb8))
+
 ## 1.0.0 (2026-04-17)
 
 
