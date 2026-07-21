@@ -272,6 +272,18 @@ Available options:
 |---|---|---|
 | `WithPrefix(string)` | Macro prefix to scan for | `"$__"` |
 | `WithComments(CommentStyle)` | Comment styles auto-stripped before expansion; `0` disables | `LineComment\|BlockComment` |
+| `WithZeroArgMacros(names...)` | Declared macros never consume a following `(...)` — the parens stay in the output as ordinary text | all macros accept argument lists |
+
+`WithZeroArgMacros` matters when token-style macros are embedded in non-SQL bodies (JSON, painless scripts, ES\|QL). There, a `(` after the macro token belongs to the surrounding language, and consuming it as an argument list would silently corrupt the query:
+
+```go
+// {"script":"x * $__interval_ms(doc['y'].value)"}
+result, err := macropro.Interpolate(body, macros, ctx,
+    macropro.WithComments(0),
+    macropro.WithZeroArgMacros("interval", "interval_ms"),
+)
+// {"script":"x * 15000(doc['y'].value)"} — the parens survive
+```
 
 If your query language uses more than one prefix family in the same query (as InfluxDB Flux does, with both `$__interval` and `v.timeRangeStart`), call `Interpolate` multiple times with different prefixes. Each call operates on the output of the previous one.
 

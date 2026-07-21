@@ -160,6 +160,88 @@ func TestInterpolate_zeroArgWithParens(t *testing.T) {
 	}
 }
 
+// TestInterpolate_withZeroArgMacros covers WithZeroArgMacros: registered
+// names never consume a following parenthesised span, so a '(' after the
+// token is ordinary text belonging to the surrounding language (JSON,
+// painless, ES|QL, ...) rather than an argument list.
+func TestInterpolate_withZeroArgMacros(t *testing.T) {
+	macros := MacroMap[struct{}]{
+		"interval_ms": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			return "15000", nil
+		},
+		"wrap": func(_ QueryContext[struct{}], args []string) (string, error) {
+			return "WRAP(" + strings.Join(args, ", ") + ")", nil
+		},
+	}
+
+	tests := []struct {
+		name  string
+		query string
+		opts  []Option
+		want  string
+	}{
+		{
+			name:  "parenthesised text after a zero-arg macro is preserved",
+			query: `{"script":"x * $__interval_ms(doc['y'].value)"}`,
+			opts:  []Option{WithZeroArgMacros("interval_ms"), WithComments(0)},
+			want:  `{"script":"x * 15000(doc['y'].value)"}`,
+		},
+		{
+			name:  "empty parens after a zero-arg macro are preserved",
+			query: "$__interval_ms()",
+			opts:  []Option{WithZeroArgMacros("interval_ms")},
+			want:  "15000()",
+		},
+		{
+			name:  "parens spanning JSON string values leave sibling content intact",
+			query: `{"a":"$__interval_ms(","b":") important"}`,
+			opts:  []Option{WithZeroArgMacros("interval_ms"), WithComments(0)},
+			want:  `{"a":"15000(","b":") important"}`,
+		},
+		{
+			name:  "macros not in the set still consume arguments",
+			query: "$__wrap(a, b) + $__interval_ms(x)",
+			opts:  []Option{WithZeroArgMacros("interval_ms")},
+			want:  "WRAP(a, b) + 15000(x)",
+		},
+		{
+			name:  "zero-arg macro expands inside another macro's arguments",
+			query: "$__wrap($__interval_ms(x))",
+			opts:  []Option{WithZeroArgMacros("interval_ms")},
+			want:  "WRAP(15000(x))",
+		},
+		{
+			name:  "names not present in the macro map are harmless",
+			query: "$__wrap(a)",
+			opts:  []Option{WithZeroArgMacros("nonexistent")},
+			want:  "WRAP(a)",
+		},
+		{
+			name:  "composes with a custom prefix",
+			query: "v.interval_ms(x)",
+			opts:  []Option{WithPrefix("v."), WithZeroArgMacros("interval_ms")},
+			want:  "15000(x)",
+		},
+		{
+			name:  "without the option parens are still consumed as arguments",
+			query: "$__interval_ms(x)",
+			want:  "15000",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Interpolate(tc.query, macros, QueryContext[struct{}]{}, tc.opts...)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got  %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestInterpolate_macroInLineCommentNotExpanded is a regression test for the
 // OOM vulnerability where a macro hidden behind a SQL -- comment was still
 // evaluated by the macro engine, triggering fill-mode side effects that caused
