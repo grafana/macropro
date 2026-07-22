@@ -83,6 +83,7 @@ type Option func(*options)
 type options struct {
 	prefix   string
 	comments CommentStyle
+	zeroArg  map[string]struct{}
 }
 
 // WithPrefix overrides the macro prefix used when scanning the query. The
@@ -100,4 +101,29 @@ func WithPrefix(prefix string) Option {
 // Flux) to customise it.
 func WithComments(style CommentStyle) Option {
 	return func(o *options) { o.comments = style }
+}
+
+// WithZeroArgMacros declares the named macros as pure tokens that never take
+// an argument list: a '(' immediately after the macro name is left in the
+// output as ordinary text instead of being consumed (with everything up to
+// the matching ')') as arguments. Even an empty "()" is preserved, unlike the
+// default behaviour where it is consumed as an empty argument list.
+//
+// Use this for token-style macros embedded in non-SQL bodies — JSON, painless
+// scripts, ES|QL and the like — where a parenthesised expression after the
+// token belongs to the surrounding language, and consuming it would silently
+// corrupt the query. Handlers for these macros always receive empty args.
+//
+// Names are matched against macro names as they appear in the [MacroMap]
+// (without the prefix). Names not present in the map are ignored. Repeated
+// uses of the option are cumulative.
+func WithZeroArgMacros(names ...string) Option {
+	return func(o *options) {
+		if o.zeroArg == nil {
+			o.zeroArg = make(map[string]struct{}, len(names))
+		}
+		for _, name := range names {
+			o.zeroArg[name] = struct{}{}
+		}
+	}
 }
