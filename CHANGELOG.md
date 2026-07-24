@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.2](https://github.com/grafana/macropro/compare/v1.0.1...v1.0.2) (2026-07-24)
+
+
+### 🐛 Bug Fixes
+
+* append trailing commenter tag once in Interpolate ([#22](https://github.com/grafana/macropro/issues/22)) ([cbe5702](https://github.com/grafana/macropro/commit/cbe5702d94e67fccd0c880d6f8220ec3c5be14a2))
+* preserve trailing SQLCommenter tags across interpolation ([#17](https://github.com/grafana/macropro/issues/17)) ([635503d](https://github.com/grafana/macropro/commit/635503d93a8569fd12071c62fdab47e652275777))
+
+
+### 🤖 Continuous Integration
+
+* use shared reusable add-to-project workflow ([#27](https://github.com/grafana/macropro/issues/27)) ([1af8413](https://github.com/grafana/macropro/commit/1af84130a9afb9e899937c6ae2b8e0303ef3a89e))
+* use shared reusable stale workflow ([#26](https://github.com/grafana/macropro/issues/26)) ([9d33a29](https://github.com/grafana/macropro/commit/9d33a29b129a6eb34085486681382c20104c2082))
+
+
+### 🔧 Chores
+
+* **deps:** update actions/setup-go action to v7 ([#25](https://github.com/grafana/macropro/issues/25)) ([2c12c92](https://github.com/grafana/macropro/commit/2c12c92ef6f4734ee7dae35459f9e9be0b0aba68))
+
 ## [1.0.1](https://github.com/grafana/macropro/compare/v1.0.0...v1.0.1) (2026-07-17)
 
 
