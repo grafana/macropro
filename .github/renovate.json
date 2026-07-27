@@ -1,17 +1,24 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
+    "github>grafana/grafana-renovate-config//presets/data-sources/base",
     "helpers:pinGitHubActionDigests"
   ],
-  "labels": ["dependencies"],
-  "schedule": ["before 6am on Monday"],
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "before 6am on Monday"
+  ],
   "timezone": "Etc/UTC",
   "dependencyDashboard": true,
   "packageRules": [
     {
       "description": "Minimum release age (3 days) for non-internal Go modules and GitHub Actions to guard against compromised releases.",
-      "matchManagers": ["gomod", "github-actions"],
+      "matchManagers": [
+        "gomod",
+        "github-actions"
+      ],
       "minimumReleaseAge": "3 days"
     },
     {
@@ -24,13 +31,19 @@
     },
     {
       "description": "Group patch-level updates into one PR.",
-      "matchUpdateTypes": ["patch"],
+      "matchUpdateTypes": [
+        "patch"
+      ],
       "groupName": "patch updates"
     },
     {
       "description": "Group GitHub Actions digest bumps into one PR.",
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["digest"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
       "groupName": "github actions digests"
     }
   ]
