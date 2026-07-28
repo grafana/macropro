@@ -38,14 +38,40 @@ func macroIntervalMS[T any](ctx QueryContext[T], _ []string) (string, error) {
 	return strconv.FormatInt(ctx.IntervalMS, 10), nil
 }
 
-// macroTimeFrom returns the start of the time range as an RFC 3339 string.
-func macroTimeFrom[T any](ctx QueryContext[T], _ []string) (string, error) {
-	return formatTime(ctx.TimeRange.From), nil
+// macroTimeFrom renders the start of the time range. With no arguments it
+// returns the timestamp as a quoted RFC 3339 string literal; with a column
+// argument it returns a lower-bound filter expression matching the output of
+// sqlutil.DefaultMacros, so sqlds migrations keep filter-style queries
+// working unchanged.
+//
+//	$__timeFrom()     → '2024-01-01T00:00:00Z'
+//	$__timeFrom(time) → time >= '2024-01-01T00:00:00Z'
+func macroTimeFrom[T any](ctx QueryContext[T], args []string) (string, error) {
+	return timeBoundary("$__timeFrom", ">=", ctx.TimeRange.From, args)
 }
 
-// macroTimeTo returns the end of the time range as an RFC 3339 string.
-func macroTimeTo[T any](ctx QueryContext[T], _ []string) (string, error) {
-	return formatTime(ctx.TimeRange.To), nil
+// macroTimeTo is the upper-bound counterpart to macroTimeFrom.
+//
+//	$__timeTo()     → '2024-01-02T00:00:00Z'
+//	$__timeTo(time) → time <= '2024-01-02T00:00:00Z'
+func macroTimeTo[T any](ctx QueryContext[T], args []string) (string, error) {
+	return timeBoundary("$__timeTo", "<=", ctx.TimeRange.To, args)
+}
+
+// timeBoundary implements the dual-mode behaviour shared by macroTimeFrom and
+// macroTimeTo. A single empty argument is treated like no argument at all, so
+// engines that parse "()" as one empty string (as sqlutil does) still get the
+// value form rather than a filter expression with a missing column.
+func timeBoundary(name, op string, t time.Time, args []string) (string, error) {
+	ts := formatTime(t)
+	switch {
+	case len(args) == 0 || (len(args) == 1 && args[0] == ""):
+		return "'" + ts + "'", nil
+	case len(args) == 1:
+		return fmt.Sprintf("%s %s '%s'", args[0], op, ts), nil
+	default:
+		return "", fmt.Errorf("%s accepts at most 1 argument (column name), got %d", name, len(args))
+	}
 }
 
 // macroTimeFilter expects exactly one argument: the column name. It expands to

@@ -193,8 +193,8 @@ These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnos
 |---|---|---|
 | `$__interval` | — | Interval as a duration string, e.g. `5m` |
 | `$__interval_ms` | — | Interval in milliseconds, e.g. `300000` |
-| `$__timeFrom()` | — | Start of time range as RFC 3339, e.g. `2024-01-01T00:00:00Z` |
-| `$__timeTo()` | — | End of time range as RFC 3339 |
+| `$__timeFrom([col])` | optional column name | Value form `'2024-01-01T00:00:00Z'`, or filter form `col >= '2024-01-01T00:00:00Z'` with a column |
+| `$__timeTo([col])` | optional column name | Value form `'2024-01-02T00:00:00Z'`, or filter form `col <= '2024-01-02T00:00:00Z'` with a column |
 | `$__timeFilter(col)` | column name | `col >= 'from' AND col <= 'to'` |
 | `$__timeGroup(col, interval)` | column name, duration | `FLOOR(UNIX_TIMESTAMP(col)/N)*N` |
 | `$__table` | — | Table name from `QueryContext.Table` |
