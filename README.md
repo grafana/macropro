@@ -191,7 +191,7 @@ These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnos
 
 | Macro | Arguments | Default output |
 |---|---|---|
-| `$__interval` | — | Interval as a duration string, e.g. `5m` |
+| `$__interval` | — | Interval as a duration string in Grafana's notation, e.g. `5m`, `1d` (byte-compatible with the SDK's `gtime.FormatInterval`) |
 | `$__interval_ms` | — | Interval in milliseconds, e.g. `300000` |
 | `$__timeFrom([col])` | optional column name | Value form `'2024-01-01T00:00:00Z'`, or filter form `col >= '2024-01-01T00:00:00Z'` with a column |
 | `$__timeTo([col])` | optional column name | Value form `'2024-01-02T00:00:00Z'`, or filter form `col <= '2024-01-02T00:00:00Z'` with a column |
