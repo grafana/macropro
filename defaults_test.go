@@ -248,3 +248,131 @@ func TestDefaultMacros_genericExtra(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// TestParseDuration pins ParseDuration to behavioural parity with the SDK's
+// gtime.ParseDuration: everything stdlib time.ParseDuration accepts, plus
+// Grafana's calendar units with fixed Julian constants. Golden values are
+// cross-checked against grafana-plugin-sdk-go v0.293.0 (backend/gtime).
+func TestParseDuration(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"5m", 5 * time.Minute},
+		{"1h30m", 90 * time.Minute},
+		{"30s", 30 * time.Second},
+		{"1d", 24 * time.Hour},
+		{"2d", 48 * time.Hour},
+		{"1w", 7 * 24 * time.Hour},
+		{"2w", 14 * 24 * time.Hour},
+		{"1M", 2629800 * time.Second},  // Julian year / 12
+		{"1y", 31557600 * time.Second}, // 365.25 days
+		{"2y", 2 * 31557600 * time.Second},
+	}
+	for _, tc := range cases {
+		got, err := ParseDuration(tc.in)
+		if err != nil {
+			t.Errorf("ParseDuration(%q) returned error: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("ParseDuration(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestParseDuration_invalid(t *testing.T) {
+	// Signs, decimals, and bare numbers must not take the calendar-unit path;
+	// they fall through to stdlib parsing, which rejects them, matching gtime.
+	for _, in := range []string{"", "d", "-1d", "1.5d", "10", "notaduration", "1q"} {
+		if _, err := ParseDuration(in); err == nil {
+			t.Errorf("ParseDuration(%q) expected error, got nil", in)
+		}
+	}
+}
+
+func TestDefaultMacros_timeGroup_calendarUnits(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"$__timeGroup(ts, 1d)", "FLOOR(UNIX_TIMESTAMP(ts)/86400)*86400"},
+		{"$__timeGroup(ts, 1w)", "FLOOR(UNIX_TIMESTAMP(ts)/604800)*604800"},
+		{"$__timeGroup(ts, '1M')", "FLOOR(UNIX_TIMESTAMP(ts)/2629800)*2629800"},
+		{"$__timeGroup(ts, 1y)", "FLOOR(UNIX_TIMESTAMP(ts)/31557600)*31557600"},
+	}
+	for _, tc := range cases {
+		got, err := Interpolate(tc.in, DefaultMacros[struct{}](), testCtx)
+		if err != nil {
+			t.Errorf("%s: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestTimeGroupExtractEpoch(t *testing.T) {
+	macros := MergeMacros(DefaultMacros[struct{}](), MacroMap[struct{}]{
+		"timeGroup": TimeGroupExtractEpoch[struct{}],
+	})
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"$__timeGroup(ts, 5m)", "floor(extract(epoch from ts)/300)*300"},
+		{"$__timeGroup(ts, 1d)", "floor(extract(epoch from ts)/86400)*86400"},
+	}
+	for _, tc := range cases {
+		got, err := Interpolate(tc.in, macros, testCtx)
+		if err != nil {
+			t.Errorf("%s: %v", tc.in, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestTimeGroupExtractEpoch_errors(t *testing.T) {
+	macros := MergeMacros(DefaultMacros[struct{}](), MacroMap[struct{}]{
+		"timeGroup": TimeGroupExtractEpoch[struct{}],
+	})
+	for _, in := range []string{
+		"$__timeGroup(ts)",               // missing interval
+		"$__timeGroup(ts, notaduration)", // unparseable interval
+		"$__timeGroup(ts, 0s)",           // non-positive interval
+		"$__timeGroup(ts, -5m)",          // negative interval
+		"$__timeGroup(, 5m)",             // empty column
+		"$__timeGroup(ts, 9999999999d)",  // calendar-unit overflow
+	} {
+		if _, err := Interpolate(in, macros, testCtx); err == nil {
+			t.Errorf("%s: expected error, got nil", in)
+		}
+	}
+}
+
+func TestTimeGroupUnixTimestamp_matchesDefault(t *testing.T) {
+	// The default timeGroup IS the MySQL-family recipe; registering the
+	// recipe explicitly must be a no-op.
+	explicit := MergeMacros(DefaultMacros[struct{}](), MacroMap[struct{}]{
+		"timeGroup": TimeGroupUnixTimestamp[struct{}],
+	})
+	const q = "$__timeGroup(ts, 5m)"
+	def, err := Interpolate(q, DefaultMacros[struct{}](), testCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := Interpolate(q, explicit, testCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def != rec {
+		t.Errorf("default %q != recipe %q", def, rec)
+	}
+	if want := "FLOOR(UNIX_TIMESTAMP(ts)/300)*300"; def != want {
+		t.Errorf("got %q, want %q", def, want)
+	}
+}

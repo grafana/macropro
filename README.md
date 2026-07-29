@@ -6,7 +6,7 @@
 
 A generic, language-agnostic Go library for parsing and expanding [Grafana macros](https://grafana.com/docs/grafana/latest/datasources/mysql/query-editor/#macros) in query strings.
 
-Grafana macros take the form `$__name` or `$__name(arg1, arg2, …)` and are expanded at query time to inject dynamic values — time ranges, grouping intervals, table names, and so on. `macropro` provides the parsing engine and a set of dialect-neutral defaults; datasource backends register their own handlers on top.
+Grafana macros take the form `$__name` or `$__name(arg1, arg2, …)` and are expanded at query time to inject dynamic values — time ranges, grouping intervals, table names, and so on. `macropro` provides the parsing engine and a set of SQL-flavoured default macros; datasource backends override any default whose SQL is not valid in their dialect and register their own handlers on top.
 
 ## Installation
 
@@ -179,7 +179,7 @@ ds.Interpolator = func(_ context.Context, q *sqlutil.Query, rawJSON json.RawMess
 }
 ```
 
-Why not keep sqlds's built-in macro handling? sqlds delegates to `sqlutil`'s defaults, several of which emit SQL that is not valid in every dialect — `$__timeGroup` produces SQL-Server-style `datepart()` calls, `$__timeFrom`/`$__timeTo` emit RFC 3339 string literals that rely on implicit string→DateTime coercion. Replacing the pipeline with your own `MacroMap` lets you override those defaults with dialect-correct output and drop the `sqlds`-side macro wiring entirely.
+Why not keep sqlds's built-in macro handling? sqlds delegates to `sqlutil`'s defaults, several of which emit SQL that is not valid in every dialect — `$__timeGroup` produces SQL-Server-style `datepart()` calls, `$__timeFrom`/`$__timeTo` emit RFC 3339 string literals that rely on implicit string→DateTime coercion. Replacing the pipeline with your own `MacroMap` lets you override those defaults with dialect-correct output and drop the `sqlds`-side macro wiring entirely. The same caveat applies to macropro's own defaults — `$__timeGroup` emits the MySQL-family idiom unless overridden (see [dialect recipes](#__timegroup-dialect-recipes)) — the difference is that the override mechanism is the primary API rather than a second interpolation pass.
 
 ### Older sqlds versions
 
@@ -187,7 +187,7 @@ On sqlds versions before v5.2.0 there is no `Interpolator` field. The closest eq
 
 ## Default macros
 
-These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnostic and works on any string (SQL, KQL, ES|QL, PromQL, etc.). `DefaultMacros` provides SQL-flavoured implementations as a starting point — non-SQL datasources should define their own `MacroMap` with only the macros they need, and SQL datasources should override any macro that requires dialect-specific syntax.
+These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnostic and works on any string (SQL, KQL, ES|QL, PromQL, etc.). `DefaultMacros` provides SQL-flavoured implementations as a starting point — non-SQL datasources should define their own `MacroMap` with only the macros they need, and SQL datasources should override any macro that requires dialect-specific syntax. In particular `$__timeGroup` defaults to the MySQL-family idiom, which is invalid on PostgreSQL, CockroachDB, Redshift, MSSQL, BigQuery, and ClickHouse — pick a [dialect recipe](#__timegroup-dialect-recipes) or write your own handler.
 
 | Macro | Arguments | Default output |
 |---|---|---|
@@ -196,9 +196,30 @@ These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnos
 | `$__timeFrom([col])` | optional column name | Value form `'2024-01-01T00:00:00Z'`, or filter form `col >= '2024-01-01T00:00:00Z'` with a column |
 | `$__timeTo([col])` | optional column name | Value form `'2024-01-02T00:00:00Z'`, or filter form `col <= '2024-01-02T00:00:00Z'` with a column |
 | `$__timeFilter(col)` | column name | `col >= 'from' AND col <= 'to'` |
-| `$__timeGroup(col, interval)` | column name, duration | `FLOOR(UNIX_TIMESTAMP(col)/N)*N` |
+| `$__timeGroup(col, interval)` | column name, duration | `FLOOR(UNIX_TIMESTAMP(col)/N)*N` (MySQL-family — see [dialect recipes](#__timegroup-dialect-recipes)) |
 | `$__table` | — | Table name from `QueryContext.Table` |
 | `$__column` | — | Column name from `QueryContext.Column` |
+
+The `interval` argument of `$__timeGroup` accepts Grafana's duration notation via `ParseDuration`: stdlib units plus `d`, `w`, `M`, and `y` (fixed Julian constants, e.g. `$__timeGroup(ts, 1d)` buckets by 86400 seconds).
+
+### $__timeGroup dialect recipes
+
+There is no dialect-neutral time-bucketing expression in SQL — every dialect spells it differently. macropro ships the two most common idioms as named, generic handlers:
+
+| Recipe | Dialects | Output for `$__timeGroup(ts, 5m)` |
+|---|---|---|
+| `TimeGroupUnixTimestamp[T]` (default) | MySQL, MariaDB, Databricks/Spark SQL | `FLOOR(UNIX_TIMESTAMP(ts)/300)*300` |
+| `TimeGroupExtractEpoch[T]` | PostgreSQL, CockroachDB, Redshift | `floor(extract(epoch from ts)/300)*300` |
+
+Register a recipe as an override:
+
+```go
+macros := macropro.MergeMacros(macropro.DefaultMacros[struct{}](), macropro.MacroMap[struct{}]{
+    "timeGroup": macropro.TimeGroupExtractEpoch[struct{}],
+})
+```
+
+Both recipes take exactly two arguments and emit a numeric epoch bucket, so alias the expression as your time column (`$__timeGroup(ts, 5m) AS time`). The fill-mode third argument accepted by Grafana's core SQL datasources is not supported: fill belongs to frame post-processing, not SQL. For other dialects, write a handler that mirrors what the shipped Grafana datasource for that dialect emits — MSSQL uses `FLOOR(DATEDIFF(second, '1970-01-01', ts)/N)*N`, BigQuery uses `TIMESTAMP_MILLIS(DIV(UNIX_MILLIS(ts), Nms) * Nms)`, ClickHouse uses `toStartOfInterval(toDateTime(ts), INTERVAL N second)`, and Snowflake uses `TIME_SLICE` — reusing `macropro.ParseDuration` for interval parsing so calendar units keep working.
 
 ## Comment stripping
 
@@ -308,8 +329,8 @@ func WithComments(style CommentStyle) Option
 // For identical names, the override wins. The base map is not mutated.
 func MergeMacros[T any](base, overrides MacroMap[T]) MacroMap[T]
 
-// DefaultMacros returns the standard set of Grafana macros with RFC 3339 /
-// generic SQL implementations.
+// DefaultMacros returns the standard set of Grafana macros with RFC 3339
+// timestamps and SQL-flavoured starting-point implementations.
 func DefaultMacros[T any]() MacroMap[T]
 
 // StripComments removes comment regions from query, replacing them with
