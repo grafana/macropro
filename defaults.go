@@ -9,7 +9,11 @@ import (
 )
 
 // DefaultMacros returns a MacroMap containing the standard Grafana macros with
-// dialect-neutral SQL implementations. All timestamps are formatted as RFC 3339.
+// SQL-flavoured starting-point implementations. All timestamps are formatted
+// as RFC 3339. The defaults are not valid in every dialect: $__timeGroup in
+// particular emits the MySQL-family epoch idiom and must be overridden — or
+// replaced with a recipe such as [TimeGroupExtractEpoch] — on PostgreSQL,
+// CockroachDB, Redshift, MSSQL, BigQuery, and ClickHouse.
 //
 // Datasources should call MergeMacros(DefaultMacros[MyCtx](), myOverrides) to
 // layer their own implementations on top of these defaults.
@@ -20,7 +24,7 @@ func DefaultMacros[T any]() MacroMap[T] {
 		"timeFrom":    macroTimeFrom[T],
 		"timeTo":      macroTimeTo[T],
 		"timeFilter":  macroTimeFilter[T],
-		"timeGroup":   macroTimeGroup[T],
+		"timeGroup":   TimeGroupUnixTimestamp[T],
 		"table":       macroTable[T],
 		"column":      macroColumn[T],
 	}
@@ -88,26 +92,64 @@ func macroTimeFilter[T any](ctx QueryContext[T], args []string) (string, error) 
 	return fmt.Sprintf("%s >= '%s' AND %s <= '%s'", col, from, col, to), nil
 }
 
-// macroTimeGroup expects two arguments: the column name and the interval string
-// (e.g. "5m", "1h"). It expands to a floor-division grouping expression.
-//
-//	$__timeGroup(time, 5m) → FLOOR(UNIX_TIMESTAMP(time)/300)*300
-func macroTimeGroup[T any](_ QueryContext[T], args []string) (string, error) {
+// timeGroupArgs validates and parses the (column, interval) argument pair
+// shared by the $__timeGroup recipes, returning the trimmed column expression
+// and the interval rounded to whole seconds. The interval accepts Grafana's
+// calendar units via [ParseDuration] and may be quoted.
+func timeGroupArgs(args []string) (string, int64, error) {
+	// Errors carry no macro name: Interpolate wraps every handler error with
+	// the invoking macro's name, and the recipes can be registered under any
+	// name or prefix.
 	if len(args) != 2 {
-		return "", fmt.Errorf("$__timeGroup requires 2 arguments (column, interval), got %d", len(args))
+		return "", 0, fmt.Errorf("requires 2 arguments (column, interval), got %d", len(args))
 	}
 	col := strings.TrimSpace(args[0])
+	if col == "" {
+		return "", 0, fmt.Errorf("requires a column expression, got an empty first argument")
+	}
 	intervalStr := strings.Trim(strings.TrimSpace(args[1]), "'\"")
 
-	d, err := time.ParseDuration(intervalStr)
+	d, err := ParseDuration(intervalStr)
 	if err != nil {
-		return "", fmt.Errorf("$__timeGroup: invalid interval %q: %w", intervalStr, err)
+		return "", 0, fmt.Errorf("invalid interval %q: %w", intervalStr, err)
 	}
 	secs := int64(math.Round(d.Seconds()))
 	if secs <= 0 {
-		return "", fmt.Errorf("$__timeGroup: interval must be positive, got %q", intervalStr)
+		return "", 0, fmt.Errorf("interval must be positive, got %q", intervalStr)
+	}
+	return col, secs, nil
+}
+
+// TimeGroupUnixTimestamp is the MySQL-family $__timeGroup recipe and the
+// default implementation registered by [DefaultMacros]. It buckets the column
+// into interval-sized groups using the epoch idiom valid on MySQL, MariaDB,
+// and Spark-derived dialects such as Databricks. The result is a numeric
+// epoch bucket, so alias it as your time column.
+//
+//	$__timeGroup(time, 5m) → FLOOR(UNIX_TIMESTAMP(time)/300)*300
+func TimeGroupUnixTimestamp[T any](_ QueryContext[T], args []string) (string, error) {
+	col, secs, err := timeGroupArgs(args)
+	if err != nil {
+		return "", err
 	}
 	return fmt.Sprintf("FLOOR(UNIX_TIMESTAMP(%s)/%d)*%d", col, secs, secs), nil
+}
+
+// TimeGroupExtractEpoch is the PostgreSQL-family $__timeGroup recipe, matching
+// the expression Grafana's PostgreSQL datasource emits for the two-argument
+// form. Valid on PostgreSQL, CockroachDB, and Redshift. The fill-mode third
+// argument accepted by Grafana's core SQL datasources is not supported: fill
+// is a frame post-processing concern, not SQL. Register it as an override:
+//
+//	MergeMacros(DefaultMacros[T](), MacroMap[T]{"timeGroup": TimeGroupExtractEpoch[T]})
+//
+//	$__timeGroup(time, 5m) → floor(extract(epoch from time)/300)*300
+func TimeGroupExtractEpoch[T any](_ QueryContext[T], args []string) (string, error) {
+	col, secs, err := timeGroupArgs(args)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("floor(extract(epoch from %s)/%d)*%d", col, secs, secs), nil
 }
 
 // macroTable returns the table name from the query context. Zero-arg macro.
@@ -151,4 +193,58 @@ func FormatDuration(d time.Duration) string {
 	default:
 		return strconv.FormatInt(int64(d/time.Millisecond), 10) + "ms"
 	}
+}
+
+// ParseDuration parses a duration in Grafana's notation: everything stdlib
+// time.ParseDuration accepts, plus the calendar units "d" (24h), "w" (7d),
+// "M", and "y" (Julian: a year is 365.25 days and a month is a twelfth of
+// that). It matches the SDK's gtime.ParseDuration, which uses these fixed
+// constants — unlike gtime.ParseInterval, whose calendar units are relative
+// to the wall clock — so output is deterministic. A calendar unit must be a
+// bare run of digits plus the unit letter; signs, decimals, and compound
+// values ("1h30m") take the stdlib path.
+func ParseDuration(s string) (time.Duration, error) {
+	const (
+		day  = 24 * time.Hour
+		week = 7 * day
+		// Julian year, matching gtime's daysInAYear constant.
+		year  = time.Duration(365.25 * 24 * float64(time.Hour))
+		month = year / 12
+	)
+	if n := len(s) - 1; n >= 1 && isDigits(s[:n]) {
+		num, err := strconv.Atoi(s[:n])
+		if err == nil {
+			var unit time.Duration
+			switch s[n] {
+			case 'd':
+				unit = day
+			case 'w':
+				unit = week
+			case 'M':
+				unit = month
+			case 'y':
+				unit = year
+			}
+			if unit != 0 {
+				d := time.Duration(num) * unit
+				// One deliberate divergence from gtime, which wraps silently
+				// here and hands the caller a garbage duration.
+				if time.Duration(num) != 0 && d/unit != time.Duration(num) {
+					return 0, fmt.Errorf("duration %q overflows", s)
+				}
+				return d, nil
+			}
+		}
+	}
+	return time.ParseDuration(s)
+}
+
+// isDigits reports whether s is a non-empty run of ASCII digits.
+func isDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
 }
