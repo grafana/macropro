@@ -41,8 +41,35 @@ func TestDefaultMacros_timeFrom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "2024-01-01T00:00:00Z"; got != want {
+	if want := "'2024-01-01T00:00:00Z'"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDefaultMacros_timeFrom_bareToken(t *testing.T) {
+	got, err := Interpolate("$__timeFrom", DefaultMacros[struct{}](), testCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "'2024-01-01T00:00:00Z'"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDefaultMacros_timeFrom_filterForm(t *testing.T) {
+	got, err := Interpolate("WHERE $__timeFrom(created_at)", DefaultMacros[struct{}](), testCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "WHERE created_at >= '2024-01-01T00:00:00Z'"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDefaultMacros_timeFrom_tooManyArgs(t *testing.T) {
+	_, err := Interpolate("$__timeFrom(a, b)", DefaultMacros[struct{}](), testCtx)
+	if err == nil {
+		t.Fatal("expected error for more than one argument")
 	}
 }
 
@@ -51,8 +78,33 @@ func TestDefaultMacros_timeTo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "2024-01-02T00:00:00Z"; got != want {
+	if want := "'2024-01-02T00:00:00Z'"; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDefaultMacros_timeTo_filterForm(t *testing.T) {
+	got, err := Interpolate("WHERE $__timeTo(created_at)", DefaultMacros[struct{}](), testCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "WHERE created_at <= '2024-01-02T00:00:00Z'"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestDefaultMacros_timeBoundaries_rangeQuery(t *testing.T) {
+	got, err := Interpolate(
+		"WHERE ts BETWEEN $__timeFrom() AND $__timeTo()",
+		DefaultMacros[struct{}](),
+		testCtx,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "WHERE ts BETWEEN '2024-01-01T00:00:00Z' AND '2024-01-02T00:00:00Z'"
+	if got != want {
+		t.Errorf("got  %q\nwant %q", got, want)
 	}
 }
 
@@ -191,7 +243,7 @@ func TestDefaultMacros_genericExtra(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "FROM public.table WHERE 2024-01-01T00:00:00Z"
+	want := "FROM public.table WHERE '2024-01-01T00:00:00Z'"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
