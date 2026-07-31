@@ -30,8 +30,9 @@ func DefaultMacros[T any]() MacroMap[T] {
 	}
 }
 
-// macroInterval returns the query interval as a human-readable duration string
-// (e.g. "5m", "30s"). Zero-arg macro — any arguments are ignored.
+// macroInterval returns the query interval as a duration string in Grafana's
+// interval notation (e.g. "5m", "1d") via [FormatDuration]. Zero-arg macro —
+// any arguments are ignored.
 func macroInterval[T any](ctx QueryContext[T], _ []string) (string, error) {
 	return FormatDuration(ctx.Interval), nil
 }
@@ -173,25 +174,34 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// FormatDuration returns d as a compact human-readable string using the
-// largest whole unit (e.g. 5m, 2h, 300s). Falls back to milliseconds for
-// sub-second intervals.
+// FormatDuration renders d in the largest unit that fits, truncating any
+// remainder (90m renders as "1h"). It is byte-compatible with the SDK's
+// gtime.FormatInterval — the $__interval contract shipped by every
+// sqlutil-based plugin — so a datasource migrating from sqlds keeps its exact
+// interval strings. The unit ladder is y (365d), d, h, m, s, ms; Grafana has
+// no week unit on the formatting side, so seven days renders as "7d". Zero,
+// negative, and sub-millisecond durations all render as "1ms", matching the
+// SDK.
 func FormatDuration(d time.Duration) string {
-	if d == 0 {
-		return "0s"
-	}
-	if d < 0 {
-		d = -d
-	}
+	const (
+		day  = 24 * time.Hour
+		year = 365 * day
+	)
 	switch {
-	case d%time.Hour == 0:
+	case d >= year:
+		return strconv.FormatInt(int64(d/year), 10) + "y"
+	case d >= day:
+		return strconv.FormatInt(int64(d/day), 10) + "d"
+	case d >= time.Hour:
 		return strconv.FormatInt(int64(d/time.Hour), 10) + "h"
-	case d%time.Minute == 0:
+	case d >= time.Minute:
 		return strconv.FormatInt(int64(d/time.Minute), 10) + "m"
-	case d%time.Second == 0:
+	case d >= time.Second:
 		return strconv.FormatInt(int64(d/time.Second), 10) + "s"
-	default:
+	case d >= time.Millisecond:
 		return strconv.FormatInt(int64(d/time.Millisecond), 10) + "ms"
+	default:
+		return "1ms"
 	}
 }
 

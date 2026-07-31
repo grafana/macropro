@@ -204,22 +204,61 @@ func TestDefaultMacros_intervalLongestMatchFirst(t *testing.T) {
 	}
 }
 
+// TestFormatDuration pins FormatDuration to byte parity with
+// gtime.FormatInterval, the $__interval contract every sqlutil-based plugin
+// ships. The want values are golden outputs of gtime.FormatInterval
+// (grafana-plugin-sdk-go v0.293.0, backend/gtime/gtime.go) — do not adjust
+// them without cross-checking against the SDK.
 func TestFormatDuration(t *testing.T) {
 	cases := []struct {
+		name string
 		d    time.Duration
 		want string
 	}{
-		{5 * time.Minute, "5m"},
-		{2 * time.Hour, "2h"},
-		{30 * time.Second, "30s"},
-		{500 * time.Millisecond, "500ms"},
-		{0, "0s"},
+		// Sub-day snapped intervals: identical before and after parity.
+		{"5m", 5 * time.Minute, "5m"},
+		{"2h", 2 * time.Hour, "2h"},
+		{"30s", 30 * time.Second, "30s"},
+		{"500ms", 500 * time.Millisecond, "500ms"},
+		{"999ms", 999 * time.Millisecond, "999ms"},
+		// Day and year rungs (no week rung: gtime formats 7d as "7d").
+		{"24h is 1d", 24 * time.Hour, "1d"},
+		{"7d stays 7d", 7 * 24 * time.Hour, "7d"},
+		{"365d is 1y", 365 * 24 * time.Hour, "1y"},
+		{"729d truncates to 1y", 729 * 24 * time.Hour, "1y"},
+		// Threshold ladder truncates non-whole units, matching gtime.
+		{"90m truncates to 1h", 90 * time.Minute, "1h"},
+		{"36h truncates to 1d", 36 * time.Hour, "1d"},
+		{"1m30s truncates to 1m", 90 * time.Second, "1m"},
+		{"1500ms truncates to 1s", 1500 * time.Millisecond, "1s"},
+		// Degenerate inputs floor to "1ms", matching gtime.
+		{"zero", 0, "1ms"},
+		{"negative", -5 * time.Minute, "1ms"},
+		{"sub-millisecond", 800 * time.Microsecond, "1ms"},
 	}
 	for _, tc := range cases {
 		got := FormatDuration(tc.d)
 		if got != tc.want {
-			t.Errorf("formatDuration(%v) = %q, want %q", tc.d, got, tc.want)
+			t.Errorf("%s: FormatDuration(%v) = %q, want %q", tc.name, tc.d, got, tc.want)
 		}
+	}
+}
+
+// TestDefaultMacros_timeGroup_nestedInterval pins the README quick-start
+// composition GROUP BY $__timeGroup(col, $__interval). Since the gtime-parity
+// change, day-scale intervals format as "1d"/"1y", so timeGroup's interval
+// parsing must accept Grafana's calendar units — this test fails if
+// FormatDuration's output alphabet and ParseDuration's input alphabet ever
+// drift apart again.
+func TestDefaultMacros_timeGroup_nestedInterval(t *testing.T) {
+	ctx := testCtx
+	ctx.Interval = 24 * time.Hour
+	got, err := Interpolate("$__timeGroup(ts, $__interval)", DefaultMacros[struct{}](), ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "FLOOR(UNIX_TIMESTAMP(ts)/86400)*86400"; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

@@ -191,7 +191,7 @@ These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnos
 
 | Macro | Arguments | Default output |
 |---|---|---|
-| `$__interval` | — | Interval as a duration string, e.g. `5m` |
+| `$__interval` | — | Interval as a duration string in Grafana's notation, e.g. `5m`, `1d` (byte-compatible with the SDK's `gtime.FormatInterval`) |
 | `$__interval_ms` | — | Interval in milliseconds, e.g. `300000` |
 | `$__timeFrom([col])` | optional column name | Value form `'2024-01-01T00:00:00Z'`, or filter form `col >= '2024-01-01T00:00:00Z'` with a column |
 | `$__timeTo([col])` | optional column name | Value form `'2024-01-02T00:00:00Z'`, or filter form `col <= '2024-01-02T00:00:00Z'` with a column |
@@ -199,6 +199,8 @@ These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnos
 | `$__timeGroup(col, interval)` | column name, duration | `FLOOR(UNIX_TIMESTAMP(col)/N)*N` (MySQL-family — see [dialect recipes](#__timegroup-dialect-recipes)) |
 | `$__table` | — | Table name from `QueryContext.Table` |
 | `$__column` | — | Column name from `QueryContext.Column` |
+
+`$__interval` renders through the same truncating ladder as `gtime.FormatInterval`: values that do not fit a whole unit lose precision, so a hand-typed min interval of `90m` renders as `1h` and `36h` renders as `1d`. Intervals calculated by Grafana are snapped (`gtime.RoundInterval`) to values that always render exactly, so truncation only affects manual overrides and API callers. Where the query needs the exact interval, use `$__interval_ms`, which is always the precise integer millisecond value.
 
 The `interval` argument of `$__timeGroup` accepts Grafana's duration notation via `ParseDuration`: stdlib units plus `d`, `w`, `M`, and `y` (fixed Julian constants, e.g. `$__timeGroup(ts, 1d)` buckets by 86400 seconds).
 
