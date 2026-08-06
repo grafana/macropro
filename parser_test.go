@@ -289,6 +289,34 @@ func TestInterpolate_macroInBlockCommentNotExpanded(t *testing.T) {
 	}
 }
 
+// T-SQL and PostgreSQL nest block comments, so an inner */ does not end the
+// comment. Without NestedBlockComment the text after it is treated as code and
+// any macro in it expands, even though the server never sees it as SQL.
+func TestInterpolate_macroAfterInnerCloseNotExpandedWhenNesting(t *testing.T) {
+	expanded := false
+	macros := MacroMap[struct{}]{
+		"timeGroup": func(_ QueryContext[struct{}], _ []string) (string, error) {
+			expanded = true
+			return "FLOOR(...)", nil
+		},
+	}
+	query := `SELECT time, val FROM metrics /* note /* detail */ $__timeGroup(time, '1s') */`
+	got, err := Interpolate(query, macros, QueryContext[struct{}]{},
+		WithComments(LineComment|NestedBlockComment|BracketQuote))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if expanded {
+		t.Error("macro inside a nested block comment was expanded")
+	}
+	if want := "SELECT time, val FROM metrics "; got[:len(want)] != want {
+		t.Errorf("query prefix mangled: got %q", got[:len(want)])
+	}
+	if strings.Contains(got, "*/") {
+		t.Errorf("comment not fully stripped: got %q", got)
+	}
+}
+
 func TestMergeMacros_overrideWins(t *testing.T) {
 	base := MacroMap[struct{}]{
 		"foo": func(_ QueryContext[struct{}], _ []string) (string, error) { return "base", nil },
@@ -1513,6 +1541,20 @@ func TestInterpolate_preservesTrailingSQLCommenterTag(t *testing.T) {
 			query: "SELECT 1 /*k='$__foo'*/",
 			opts:  []Option{WithComments(0)},
 			want:  "SELECT 1 /*k='BAR'*/",
+		},
+		{
+			// NestedBlockComment alone must gate the split too, otherwise the
+			// tag is stripped for every caller following the T-SQL recipe.
+			name:  "trailing tag survives under NestedBlockComment alone",
+			query: "SELECT $__foo FROM t /*application='grafana'*/",
+			opts:  []Option{WithComments(LineComment | NestedBlockComment)},
+			want:  "SELECT BAR FROM t /*application='grafana'*/",
+		},
+		{
+			name:  "macro-shaped text inside the tag is not expanded under nesting",
+			query: "SELECT 1 /*k='$__foo'*/",
+			opts:  []Option{WithComments(LineComment | NestedBlockComment)},
+			want:  "SELECT 1 /*k='$__foo'*/",
 		},
 	}
 

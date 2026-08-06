@@ -29,6 +29,10 @@
 //	clean := macropro.StripComments(query, macropro.HashComment)
 //	result, err := macropro.Interpolate(clean, macros, ctx)
 //
+// The default treats the first */ as closing a block comment. Callers
+// targeting T-SQL or PostgreSQL, which nest block comments, should select
+// [NestedBlockComment] via [WithComments] instead.
+//
 // A trailing SQLCommenter (https://google.github.io/sqlcommenter/) attribution
 // tag such as /*application='grafana',source='bi'*/ is preserved rather than
 // stripped: [Interpolate] splits it off with [SplitTrailingSQLCommenter]
@@ -52,7 +56,7 @@ func StripComments(query string, style CommentStyle) string {
 	// Fast path: if no comment-stripping bit is set, there is nothing to do.
 	// DollarQuote alone is a no-op because it only preserves regions that are
 	// already copied verbatim.
-	const anyCommentStyle = LineComment | BlockComment | HashComment | SlashComment
+	const anyCommentStyle = LineComment | blockCommentStyles | HashComment | SlashComment
 	if style&anyCommentStyle == 0 {
 		return query
 	}
@@ -134,18 +138,8 @@ func StripComments(query string, style CommentStyle) string {
 			writeSpaces(&b, j-i)
 			i = j
 
-		case style&BlockComment != 0 && c == '/' && i+1 < len(query) && query[i+1] == '*':
-			// If the closing */ is missing, the remainder of the input is
-			// blanked through EOF so that a macro token hidden in an
-			// unterminated comment cannot escape the stripper.
-			j := i + 2
-			for j < len(query) {
-				if j+1 < len(query) && query[j] == '*' && query[j+1] == '/' {
-					j += 2
-					break
-				}
-				j++
-			}
+		case style&blockCommentStyles != 0 && c == '/' && i+1 < len(query) && query[i+1] == '*':
+			j := scanBlockComment(query, i, style&NestedBlockComment != 0)
 			writeSpaces(&b, j-i)
 			i = j
 
@@ -194,6 +188,51 @@ func parseDollarQuote(s string, pos int) (tag string, end int) {
 	return openTag, j + 1 + idx + len(openTag)
 }
 
+// scanBlockComment advances past a /* … */ block comment starting at position
+// pos in s, where s[pos:pos+2] is "/*". Returns the index immediately after the
+// closing "*/".
+//
+// When nested is true a "/*" inside the comment opens a further level that must
+// be closed by its own "*/" before the comment ends, matching T-SQL and
+// PostgreSQL. When false the first "*/" closes the comment regardless of any
+// intervening "/*", matching MySQL and Oracle.
+//
+// If the comment is unterminated, returns len(s) so that the caller blanks the
+// remainder of the input through EOF and a macro token hidden in an
+// unterminated comment cannot escape the stripper.
+func scanBlockComment(s string, pos int, nested bool) int {
+	depth := 1
+	j := pos + 2
+	for j+1 < len(s) {
+		switch {
+		case s[j] == '*' && s[j+1] == '/':
+			depth--
+			j += 2
+			if depth == 0 {
+				return j
+			}
+		case nested && s[j] == '/' && s[j+1] == '*':
+			depth++
+			j += 2
+		default:
+			j++
+		}
+	}
+	return len(s)
+}
+
+// foldNestedBlockComment rewrites [NestedBlockComment] to [BlockComment].
+// Nesting changes where a block comment ends, not which bytes can start one,
+// so the needle sets are identical and the two flags can share the constants
+// below. Without this the recommended T-SQL and PostgreSQL styles would miss
+// every fast-path case and allocate a builder on each call.
+func foldNestedBlockComment(style CommentStyle) CommentStyle {
+	if style&NestedBlockComment != 0 {
+		style = style&^NestedBlockComment | BlockComment
+	}
+	return style
+}
+
 // stripNeedles returns the set of bytes that could start a comment under the
 // given style. Quote characters are deliberately NOT included: if a query
 // contains no comment starter, there is nothing to strip regardless of what
@@ -206,6 +245,7 @@ func parseDollarQuote(s string, pos int) (tag string, end int) {
 // Common style values return a constant so the hot path is allocation-free;
 // unusual combinations fall through to a small builder.
 func stripNeedles(style CommentStyle) string {
+	style = foldNestedBlockComment(style)
 	switch style {
 	case LineComment | BlockComment:
 		return stripNeedlesLineBlock
@@ -224,7 +264,7 @@ func stripNeedles(style CommentStyle) string {
 	if style&LineComment != 0 {
 		b.WriteByte('-')
 	}
-	if style&(BlockComment|SlashComment) != 0 {
+	if style&(blockCommentStyles|SlashComment) != 0 {
 		b.WriteByte('/')
 	}
 	if style&HashComment != 0 {
@@ -253,6 +293,7 @@ const (
 // Common style values return a constant so the hot path is allocation-free;
 // unusual combinations fall through to a small builder.
 func scanNeedles(style CommentStyle) string {
+	style = foldNestedBlockComment(style)
 	switch style {
 	case LineComment | BlockComment:
 		return scanNeedlesLineBlock
@@ -273,7 +314,7 @@ func scanNeedles(style CommentStyle) string {
 	if style&LineComment != 0 {
 		b.WriteByte('-')
 	}
-	if style&(BlockComment|SlashComment) != 0 {
+	if style&(blockCommentStyles|SlashComment) != 0 {
 		b.WriteByte('/')
 	}
 	if style&HashComment != 0 {

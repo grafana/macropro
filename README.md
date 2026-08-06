@@ -243,7 +243,7 @@ SELECT 1 AS value
 /*application='grafana',source='bi'*/;
 ```
 
-Whenever `BlockComment` stripping is enabled, the tag is split off with `SplitTrailingSQLCommenter` before stripping and macro expansion, then re-appended verbatim, so query-tagging metadata (for example PlanetScale Insights or other observability backends) reaches the database unchanged. Because the tag never passes through expansion, a macro token inside a tag value is never evaluated, and no macro can complete across the comment boundary in either direction.
+Whenever block-comment stripping is enabled, by either `BlockComment` or `NestedBlockComment`, the tag is split off with `SplitTrailingSQLCommenter` before stripping and macro expansion, then re-appended verbatim, so query-tagging metadata (for example PlanetScale Insights or other observability backends) reaches the database unchanged. Because the tag never passes through expansion, a macro token inside a tag value is never evaluated, and no macro can complete across the comment boundary in either direction.
 
 Only trailing tags in strict `key='value'` form are preserved. Inline tags, plain block comments, and tag-shaped text inside a trailing line comment are still stripped like any other comment. Callers that pre-process queries with `StripComments` directly can call `SplitTrailingSQLCommenter` themselves for the same protection.
 
@@ -252,7 +252,8 @@ Available `CommentStyle` flags:
 | Flag | Strips / preserves |
 |---|---|
 | `LineComment` | Strips `-- …` until end of line |
-| `BlockComment` | Strips `/* … */` |
+| `BlockComment` | Strips `/* … */`, ending at the first `*/` |
+| `NestedBlockComment` | Strips `/* … */` with nesting, so an inner `/*` must be closed by its own `*/` before the comment ends. Implies `BlockComment` |
 | `HashComment` | Strips `# …` until end of line (MySQL-style) |
 | `SlashComment` | Strips `// …` until end of line (Flux-style) |
 | `DollarQuote` | Preserves PostgreSQL `$tag$…$tag$` dollar-quoted strings |
@@ -262,14 +263,16 @@ Available `CommentStyle` flags:
 
 Flags can be combined with `\|`. Pass `0` to strip nothing.
 
+Dialects disagree on whether block comments nest. T-SQL and PostgreSQL nest them, so `/* a /* b */ c */` is a single comment, and PostgreSQL documents this as following the SQL standard's bracketed-comment feature. MySQL, MariaDB, Oracle and SQLite end the comment at the first `*/`, which leaves `c */` as code. Pick the flag that matches your target: setting `NestedBlockComment` for a dialect that does not nest blanks text the server would execute, and leaving it unset for a dialect that does nest exposes commented-out text to macro expansion.
+
 Dialect recipes:
 
 | Dialect | Style |
 |---|---|
 | Generic SQL (default) | `LineComment \| BlockComment` |
-| PostgreSQL | `LineComment \| BlockComment \| DollarQuote` |
+| PostgreSQL | `LineComment \| NestedBlockComment \| DollarQuote` |
 | MySQL | `LineComment \| BlockComment \| HashComment \| BacktickQuote \| BackslashEscape` |
-| MSSQL / T-SQL | `LineComment \| BlockComment \| BracketQuote` |
+| MSSQL / T-SQL | `LineComment \| NestedBlockComment \| BracketQuote` |
 | InfluxDB Flux | `SlashComment \| BlockComment` |
 
 ## Options
@@ -342,7 +345,8 @@ func StripComments(query string, style CommentStyle) string
 // SplitTrailingSQLCommenter splits a trailing SQLCommenter attribution tag
 // off the end of query, returning the body and the tag (or query and "" when
 // there is none). style selects which line-comment markers the dialect
-// recognises. Interpolate calls this automatically when BlockComment is set.
+// recognises. Interpolate calls this automatically when block-comment
+// stripping is enabled.
 func SplitTrailingSQLCommenter(query string, style CommentStyle) (string, string)
 ```
 
