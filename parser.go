@@ -73,7 +73,7 @@ func Interpolate[T any](query string, macros MacroMap[T], ctx QueryContext[T], o
 	// boundary in either direction. Only relevant when block comments would
 	// otherwise be stripped; with stripping disabled the tag survives anyway.
 	var commenterTag string
-	if o.comments&BlockComment != 0 {
+	if o.comments&blockCommentStyles != 0 {
 		work, commenterTag = SplitTrailingSQLCommenter(work, o.comments)
 	}
 
@@ -227,7 +227,7 @@ var sqlCommenterRegExp = regexp.MustCompile(`^/\*\s*[a-zA-Z0-9%_.-]+='(?:\\.|[^'
 // any trailing ';'), or the original query and an empty string when there is
 // none.
 //
-// [Interpolate] calls this automatically whenever [BlockComment] stripping is
+// [Interpolate] calls this automatically whenever block-comment stripping is
 // enabled and re-appends the tag verbatim after expansion, so the tag reaches
 // the database unchanged and no macro can complete across the comment
 // boundary in either direction. It is exported for callers that pre-process
