@@ -264,7 +264,7 @@ func stripNeedles(style CommentStyle) string {
 	if style&LineComment != 0 {
 		b.WriteByte('-')
 	}
-	if style&(blockCommentStyles|SlashComment) != 0 {
+	if style&(BlockComment|SlashComment) != 0 {
 		b.WriteByte('/')
 	}
 	if style&HashComment != 0 {
@@ -314,7 +314,7 @@ func scanNeedles(style CommentStyle) string {
 	if style&LineComment != 0 {
 		b.WriteByte('-')
 	}
-	if style&(blockCommentStyles|SlashComment) != 0 {
+	if style&(BlockComment|SlashComment) != 0 {
 		b.WriteByte('/')
 	}
 	if style&HashComment != 0 {
