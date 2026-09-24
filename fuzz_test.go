@@ -53,3 +53,41 @@ func FuzzInterpolate(f *testing.F) {
 		}
 	})
 }
+
+// FuzzStripComments exercises the byte scanner across every style combination.
+// Two invariants must hold for every input: the output is the same byte length
+// as the input, and each byte is either unchanged or blanked to a space. Both
+// fail loudly on the index-arithmetic mistakes that comment and quote nesting
+// invite.
+func FuzzStripComments(f *testing.F) {
+	seeds := []struct {
+		query string
+		style uint
+	}{
+		{"SELECT /* a /* b */ c */ 1", uint(LineComment | NestedBlockComment)},
+		{"SELECT /* a /* b */ c */ 1", uint(LineComment | BlockComment)},
+		{"/*", uint(NestedBlockComment)},
+		{"/*/", uint(NestedBlockComment)},
+		{"/*/*", uint(NestedBlockComment)},
+		{"*/", uint(NestedBlockComment)},
+		{"/* '/*' */", uint(NestedBlockComment)},
+		{"SELECT [a /* b] -- c", uint(LineComment | NestedBlockComment | BracketQuote)},
+		{"SELECT $$ /* $$ --", uint(LineComment | NestedBlockComment | DollarQuote)},
+		{"SELECT `a /*` # b", uint(HashComment | NestedBlockComment | BacktickQuote)},
+	}
+	for _, s := range seeds {
+		f.Add(s.query, s.style)
+	}
+
+	f.Fuzz(func(t *testing.T, query string, style uint) {
+		got := StripComments(query, CommentStyle(style))
+		if len(got) != len(query) {
+			t.Fatalf("length not preserved: got %d, want %d\nstyle %d input %q", len(got), len(query), style, query)
+		}
+		for i := range len(got) {
+			if got[i] != query[i] && got[i] != ' ' {
+				t.Fatalf("byte %d became %q, want unchanged or blanked\nstyle %d input %q", i, got[i], style, query)
+			}
+		}
+	})
+}

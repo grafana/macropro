@@ -73,7 +73,24 @@ const (
 	// standard_conforming_strings=on (the default since 9.1), which rejects
 	// backslash escapes in regular string literals.
 	BackslashEscape
+	// NestedBlockComment makes /* … */ regions nest: a /* inside a block
+	// comment opens a further level that must be closed by its own */ before
+	// the comment ends. T-SQL and PostgreSQL nest block comments this way, so
+	// without this flag the text between an inner */ and the outer */ is
+	// treated as code when the database treats it as comment.
+	//
+	// MySQL, MariaDB, Oracle and SQLite do not nest, because the first */
+	// always closes the comment. Do NOT set this flag for those dialects, or
+	// commented-out text the database would execute is blanked instead.
+	//
+	// Implies [BlockComment], so it can be set on its own.
+	NestedBlockComment
 )
+
+// blockCommentStyles is the set of flags that enable /* … */ stripping.
+// [NestedBlockComment] implies [BlockComment] so that setting it alone is not
+// a silent no-op.
+const blockCommentStyles = BlockComment | NestedBlockComment
 
 // Option configures the behaviour of [Interpolate]. Options are applied in
 // order and the last one wins for conflicting settings.
@@ -99,6 +116,9 @@ func WithPrefix(prefix string) Option {
 // LineComment|BlockComment, matching standard SQL. Pass 0 to disable
 // auto-stripping, or a different bitmask (e.g. SlashComment|BlockComment for
 // Flux) to customise it.
+//
+// Dialects that nest block comments, notably T-SQL and PostgreSQL, should
+// swap [BlockComment] for [NestedBlockComment].
 func WithComments(style CommentStyle) Option {
 	return func(o *options) { o.comments = style }
 }

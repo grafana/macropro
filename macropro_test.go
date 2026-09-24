@@ -42,6 +42,102 @@ func TestStripComments_blockComment(t *testing.T) {
 	}
 }
 
+func TestStripComments_blockCommentDoesNotNestByDefault(t *testing.T) {
+	// Without NestedBlockComment the first */ closes the comment, so " c */ 1"
+	// survives as code. This is the MySQL and Oracle reading.
+	q := "SELECT /* a /* b */ c */ 1"
+	got := StripComments(q, BlockComment)
+	want := blankRange(q, 7, 19)
+	if got != want {
+		t.Errorf("\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestStripComments_nestedBlockCommentImpliesBlockComment(t *testing.T) {
+	q := "SELECT /* comment */ 1"
+	got := StripComments(q, NestedBlockComment)
+	want := blankRange(q, 7, 20)
+	if got != want {
+		t.Errorf("\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestStripComments_nestedBlockCommentDepth(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			"three levels",
+			"SELECT /* a /* b /* c */ d */ e */ 1",
+			blankRange("SELECT /* a /* b /* c */ d */ e */ 1", 7, 34),
+		},
+		{
+			// Quotes carry no meaning inside a comment, so this /* opens a
+			// level that is never closed and the rest is blanked through EOF.
+			"quoted /* inside a comment still opens a level",
+			"SELECT /* '/*' */ 1",
+			blankRange("SELECT /* '/*' */ 1", 7, 19),
+		},
+		{
+			"adjacent comments tracked independently",
+			"SELECT /* a /* b */ */ 1 /* c */ 2",
+			blankRange(blankRange("SELECT /* a /* b */ */ 1 /* c */ 2", 7, 22), 25, 32),
+		},
+		{
+			// The markers overlap by one byte, so the scanner must not reuse
+			// the '*' of an opener as the '*' of a closer.
+			"lone /*/ stays open",
+			"SELECT /*/ 1",
+			blankRange("SELECT /*/ 1", 7, 12),
+		},
+		{
+			"/*/*/ opens twice and closes none",
+			"SELECT /*/*/ 1",
+			blankRange("SELECT /*/*/ 1", 7, 14),
+		},
+		{
+			"stray closer after a complete comment is left alone",
+			"SELECT /**/*/ 1",
+			blankRange("SELECT /**/*/ 1", 7, 11),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := StripComments(tc.input, LineComment|NestedBlockComment)
+			if got != tc.want {
+				t.Errorf("\ninput %q\ngot   %q\nwant  %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// stripNeedles answers every StripComments call, so a style that misses its
+// constant fast path allocates a builder on each query. The dialect recipes in
+// the README must stay on the constant path.
+func TestStripComments_recommendedStylesAreAllocationFree(t *testing.T) {
+	q := "SELECT id, name FROM users WHERE tenant = 42"
+	styles := []struct {
+		name  string
+		style CommentStyle
+	}{
+		{"generic", LineComment | BlockComment},
+		{"generic nested", LineComment | NestedBlockComment},
+		{"postgresql", LineComment | NestedBlockComment | DollarQuote},
+		{"flux", SlashComment | BlockComment},
+	}
+	for _, s := range styles {
+		t.Run(s.name, func(t *testing.T) {
+			var sink string
+			got := testing.AllocsPerRun(100, func() { sink = StripComments(q, s.style) })
+			if got != 0 {
+				t.Errorf("StripComments allocated %v times, want 0 (sink %q)", got, sink)
+			}
+		})
+	}
+}
+
 func TestStripComments_hashComment(t *testing.T) {
 	q := "SELECT 1 # comment\nFROM t"
 	got := StripComments(q, HashComment)
@@ -215,12 +311,17 @@ func TestStripComments_dialectCases(t *testing.T) {
 
 	// PostgreSQL: adds dollar-quoted strings to the standard set.
 	t.Run("postgresql", func(t *testing.T) {
-		style := LineComment | BlockComment | DollarQuote
+		style := LineComment | NestedBlockComment | DollarQuote
 		cases := []struct {
 			name  string
 			input string
 			want  string
 		}{
+			{
+				"nested block comment closes at the outer */",
+				"SELECT /* a /* b */ c */ 1",
+				blankRange("SELECT /* a /* b */ c */ 1", 7, 24),
+			},
 			{
 				"line comment inside empty dollar-quoted string preserved",
 				"SELECT $$ -- not a comment $$",
@@ -269,6 +370,13 @@ func TestStripComments_dialectCases(t *testing.T) {
 				"strips hash comments",
 				"SELECT 1 # hash comment\nFROM t",
 				blankRange("SELECT 1 # hash comment\nFROM t", 9, 23),
+			},
+			{
+				// MySQL does not nest block comments, so the first */ closes
+				// the comment and " c */ 1" is code the server would execute.
+				"block comment ends at the first */",
+				"SELECT /* a /* b */ c */ 1",
+				blankRange("SELECT /* a /* b */ c */ 1", 7, 19),
 			},
 			{
 				"preserves # inside single-quoted string",
@@ -323,12 +431,27 @@ func TestStripComments_dialectCases(t *testing.T) {
 
 	// MSSQL: adds T-SQL bracket-quoted identifiers to the standard set.
 	t.Run("mssql", func(t *testing.T) {
-		style := LineComment | BlockComment | BracketQuote
+		style := LineComment | NestedBlockComment | BracketQuote
 		cases := []struct {
 			name  string
 			input string
 			want  string
 		}{
+			{
+				"nested block comment closes at the outer */",
+				"SELECT /* a /* b */ c */ 1",
+				blankRange("SELECT /* a /* b */ c */ 1", 7, 24),
+			},
+			{
+				"unterminated nested block comment blanked to EOF",
+				"SELECT 1 /* a /* b */ FROM t",
+				blankRange("SELECT 1 /* a /* b */ FROM t", 9, 28),
+			},
+			{
+				"nested block comment inside bracket-quoted identifier preserved",
+				"SELECT [col /* a /* b */ name] FROM t",
+				"SELECT [col /* a /* b */ name] FROM t",
+			},
 			{
 				"line comment inside bracket-quoted identifier preserved",
 				"SELECT [col -- name] FROM t",
