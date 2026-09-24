@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.0](https://github.com/grafana/macropro/compare/v1.0.2...v1.1.0) (2026-09-24)
+
+
+### 🎉 Features
+
+* **comments:** add NestedBlockComment for dialects that nest /* */ ([#35](https://github.com/grafana/macropro/issues/35)) ([f4e70b2](https://github.com/grafana/macropro/commit/f4e70b2a53746f797e3ec444c82742bdb0768fda))
+* **defaults:** dual-mode timeFrom/timeTo with quoted value form ([#31](https://github.com/grafana/macropro/issues/31)) ([4b96fe9](https://github.com/grafana/macropro/commit/4b96fe9dc71d5d521e8ee35f454fc4dbc1b8171e))
+* **defaults:** gtime-compatible timeGroup intervals and dialect recipes ([#32](https://github.com/grafana/macropro/issues/32)) ([c1a977f](https://github.com/grafana/macropro/commit/c1a977fbeda20457e8bea2ee3c9a1d732b8c1400))
+* **defaults:** match gtime.FormatInterval byte-for-byte in FormatDuration ([#33](https://github.com/grafana/macropro/issues/33)) ([a681e57](https://github.com/grafana/macropro/commit/a681e57a8ef9c5800edf03a7483f9905e8dc4348))
+
+
+### 🔧 Chores
+
+* **deps:** update actions/checkout action to v7.0.1 ([#28](https://github.com/grafana/macropro/issues/28)) ([83c41f2](https://github.com/grafana/macropro/commit/83c41f24a6947f6744cfb5300b05856e1411a954))
+* **deps:** update dependency golangci/golangci-lint to v2.13.2 ([#36](https://github.com/grafana/macropro/issues/36)) ([2e25fd1](https://github.com/grafana/macropro/commit/2e25fd1e5fc6b3bb35a960784218b0e789b880d4))
+* use shared data-sources/base Renovate preset ([#29](https://github.com/grafana/macropro/issues/29)) ([1a33385](https://github.com/grafana/macropro/commit/1a33385adae52751608ca949fe090d6309d3d049))
+
 ## [1.0.2](https://github.com/grafana/macropro/compare/v1.0.1...v1.0.2) (2026-07-24)
 
 
