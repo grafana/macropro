@@ -207,6 +207,8 @@ Use this list when you move a plugin onto macropro. Each item names the decision
 
 Keep the shipped output of every macro byte for byte, unless the changeset says that it changes. The defaults accept both the value form and the filter form of `$__timeFrom` and `$__timeTo`, so neither contract breaks on migration.
 
+Inherit a default only when a test in the plugin pins its output. A dependency bump then shows a changed default as a failing test instead of a changed query.
+
 ### In the plugin code
 
 - Return `sqlds.Macros{}` from the driver. On the `Interpolator` path, sqlds does not run a second interpolation pass.
@@ -219,6 +221,7 @@ Keep the shipped output of every macro byte for byte, unless the changeset says 
 
 - Write one test case per macro per argument form, with the exact expected output. Include the zero-argument form, a nested argument such as `$__timeFilter(COALESCE(a, b))`, a macro inside a comment, a trailing SQLCommenter tag, and an unknown `$__name`.
 - Run the existing query tests of the plugin unchanged. A changed expectation is a changed contract and goes into the PR body.
+- Repeat the fleet compatibility check when you bump macropro. A changed default reaches the plugin at the bump, not when the macropro PR merges.
 
 ### Frontend and docs
 
