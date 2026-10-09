@@ -94,3 +94,18 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
           govulncheck ./...
+
+  gate:
+    name: Gate
+    needs: [test, lint, govulncheck]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every required job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          case "$RESULTS" in
+            *failure*|*cancelled*|*skipped*) exit 1 ;;
+          esac
