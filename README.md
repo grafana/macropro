@@ -185,6 +185,56 @@ Why not keep sqlds's built-in macro handling? sqlds delegates to `sqlutil`'s def
 
 On sqlds versions before v5.2.0 there is no `Interpolator` field. The closest equivalent is to expand macros upstream in the driver's `MutateQueryData` hook — round-tripping each query's JSON to rewrite `rawSql` — and return an empty `sqlds.Macros{}` so sqlds's own scan is a no-op on already-expanded SQL. That hook cannot return errors, so expansion failures can only be logged and passed through. Prefer upgrading sqlds and using the `Interpolator` field.
 
+## Adoption checklist
+
+Use this list when you move a plugin onto macropro. Each item names the decision, the default, and where the fleet already made the same decision.
+
+### Before you write code
+
+1. Pick the integration point. A plugin on sqlds 5.2.0 or later assigns `ds.Interpolator` (see [Migrating from sqlds](#migrating-from-sqlds)). A plugin with its own query engine calls `macropro.Interpolate` where it calls `sqlutil.Interpolate` today. A plugin on an older sqlds upgrades sqlds first.
+2. List every macro that the plugin ships, with its current output for each argument form. Dashboards depend on that output. The list is the basis for the tests and for the PR body.
+3. Pick the comment style for the dialect from the [recipes table](#comment-stripping). A wrong `NestedBlockComment` setting blanks text that the server runs, or exposes commented-out text to expansion.
+
+### Which defaults to keep and which to override
+
+| Default | Keep when | Override when |
+|---|---|---|
+| `$__interval`, `$__interval_ms` | the plugin inherited `gtime.FormatInterval` from sqlutil, which is the same output | the plugin ships its own format |
+| `$__timeFrom`, `$__timeTo` | the plugin shipped the sqlutil filter form, or had no such macro | the plugin emits a dialect literal, for example `TIMESTAMP('...')` or `FROM_UNIXTIME(...)` |
+| `$__timeFilter` | the dialect accepts RFC 3339 string literals | the dialect needs a cast, for example `toDateTime(...)` |
+| `$__timeGroup` | the dialect is in the MySQL family | every other dialect, with a [recipe](#__timegroup-dialect-recipes) or a handler that mirrors the shipped Grafana data source |
+| `$__table`, `$__column` | the plugin sets `QueryContext.Table` and `Column` | the plugin has no table or column context, so the handler returns an error instead of an empty string |
+
+Keep the shipped output of every macro byte for byte, unless the changeset says that it changes. The defaults accept both the value form and the filter form of `$__timeFrom` and `$__timeTo`, so neither contract breaks on migration.
+
+### In the plugin code
+
+- Return `sqlds.Macros{}` from the driver. On the `Interpolator` path, sqlds does not run a second interpolation pass.
+- Wrap every interpolation error in `backend.DownstreamError`. The query text is the source of the error, and sqlds classifies only its own errors.
+- Fill `QueryContext.Extra` from the raw query JSON when a handler needs plugin-specific fields.
+- For macros inside JSON, script, or ES|QL bodies, pass `WithZeroArgMacros` for the token-style names and `WithComments(0)`.
+- On the older `MutateQueryData` path only, remove `$__` from any text that you put into an error message. sqlds scans the rewritten query again and expands what it finds.
+
+### Tests
+
+- Write one test case per macro per argument form, with the exact expected output. Include the zero-argument form, a nested argument such as `$__timeFilter(COALESCE(a, b))`, a macro inside a comment, a trailing SQLCommenter tag, and an unknown `$__name`.
+- Run the existing query tests of the plugin unchanged. A changed expectation is a changed contract and goes into the PR body.
+
+### Frontend and docs
+
+- Update the macro hints and autocomplete in the query editor so that they show the backend output.
+- Update the plugin docs where they list macro output.
+
+### The PR body
+
+Every adoption PR, and every PR to macropro that changes a default macro, the parser, or comment stripping, carries a **Fleet compatibility** section:
+
+- A table with one row per macro invocation: the input, the output before, the output after.
+- A sentence that says whether any shipped output changes, and the changeset level if it does.
+- For a macropro PR, one line per adopter that says whether the change reaches it.
+
+[grafana/macropro#31](https://github.com/grafana/macropro/pull/31) and [google-bigquery-datasource#550](https://github.com/grafana/google-bigquery-datasource/pull/550) are the reference examples. The [ClickHouse plugin](https://github.com/grafana/clickhouse-datasource/tree/main/pkg/macros) is the reference implementation of the sqlds path.
+
 ## Default macros
 
 These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnostic and works on any string (SQL, KQL, ES|QL, PromQL, etc.). `DefaultMacros` provides SQL-flavoured implementations as a starting point — non-SQL datasources should define their own `MacroMap` with only the macros they need, and SQL datasources should override any macro that requires dialect-specific syntax. In particular `$__timeGroup` defaults to the MySQL-family idiom, which is invalid on PostgreSQL, CockroachDB, Redshift, MSSQL, BigQuery, and ClickHouse — pick a [dialect recipe](#__timegroup-dialect-recipes) or write your own handler.
