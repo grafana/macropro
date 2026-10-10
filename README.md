@@ -185,6 +185,34 @@ Why not keep sqlds's built-in macro handling? sqlds delegates to `sqlutil`'s def
 
 On sqlds versions before v5.2.0 there is no `Interpolator` field. The closest equivalent is to expand macros upstream in the driver's `MutateQueryData` hook — round-tripping each query's JSON to rewrite `rawSql` — and return an empty `sqlds.Macros{}` so sqlds's own scan is a no-op on already-expanded SQL. That hook cannot return errors, so expansion failures can only be logged and passed through. Prefer upgrading sqlds and using the `Interpolator` field.
 
+## Conformance
+
+The `conformance` package pins the output of every macro a plugin ships. The plugin lists its invocations, the package interpolates them under a fixed context, renders one Markdown table, and compares the bytes with a golden file in the plugin repository. A macropro upgrade that changes an inherited default fails the plugin's test instead of changing a query. The golden file is also the Fleet compatibility table for the PR.
+
+```go
+var update = flag.Bool("update", false, "rewrite golden files")
+
+func TestMacroConformance(t *testing.T) {
+	conformance.Run(t, conformance.Suite[struct{}]{
+		Macros:  ClickHouseMacros,
+		Options: []macropro.Option{macropro.WithComments(clickHouseComments)},
+		Cases: []conformance.Case{
+			{Query: "$__timeFilter(created_at)"},
+			{Query: "$__timeFilter(COALESCE(a, b))"},
+			{Query: "$__interval"},
+		},
+	}, "testdata/macros.md", *update)
+}
+```
+
+Run `go test ./pkg/macros -update` once to write the file, commit it, and run the test without the flag from then on. `Run` compares bytes, so the golden file must keep LF line endings on every platform. Add this line to the repository's `.gitattributes`:
+
+```
+pkg/macros/testdata/*.md text eol=lf
+```
+
+Write one case per macro per argument form. The package appends four engine probes to every suite: an unknown macro, a macro inside a line comment, a macro inside a block comment, and a trailing SQLCommenter tag. `conformance.DefaultContext` never changes, because a change would alter every golden file in the fleet. A suite that passes `WithPrefix` sets `Suite.Prefix` to the same value so the probes use it. The package's own `conformance/testdata/default_macros.md` pins `DefaultMacros`.
+
 ## Default macros
 
 These are provided by `DefaultMacros[T]()`. The parsing engine is language-agnostic and works on any string (SQL, KQL, ES|QL, PromQL, etc.). `DefaultMacros` provides SQL-flavoured implementations as a starting point — non-SQL datasources should define their own `MacroMap` with only the macros they need, and SQL datasources should override any macro that requires dialect-specific syntax. In particular `$__timeGroup` defaults to the MySQL-family idiom, which is invalid on PostgreSQL, CockroachDB, Redshift, MSSQL, BigQuery, and ClickHouse — pick a [dialect recipe](#__timegroup-dialect-recipes) or write your own handler.
