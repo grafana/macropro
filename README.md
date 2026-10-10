@@ -213,6 +213,8 @@ Inherit a default only when a test in the plugin pins its output. A dependency b
 
 - Return `sqlds.Macros{}` from the driver. On the `Interpolator` path, sqlds does not run a second interpolation pass.
 - Wrap every interpolation error in `backend.DownstreamError`. The query text is the source of the error, and sqlds classifies only its own errors.
+- Name the expected form in every argument-count error, for example `usage: $__timeFilter(timeColumn)`. The message is what the user sees in the panel, and most interpolation errors in practice are filter macros called with no argument.
+- Keep the zero-argument value form when you override `timeFrom` or `timeTo`. The v1.1.0 defaults accept both `$__timeFrom()` and `$__timeFrom(col)`, and plugin users write both.
 - Fill `QueryContext.Extra` from the raw query JSON when a handler needs plugin-specific fields.
 - For macros inside JSON, script, or ES|QL bodies, pass `WithZeroArgMacros` for the token-style names and `WithComments(0)`.
 - On the older `MutateQueryData` path only, remove `$__` from any text that you put into an error message. sqlds scans the rewritten query again and expands what it finds.
