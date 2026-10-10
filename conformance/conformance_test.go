@@ -9,8 +9,6 @@ import (
 	"github.com/grafana/macropro"
 )
 
-var _ = strings.Repeat
-
 func TestDefaultContext(t *testing.T) {
 	got := DefaultContext[struct{}]()
 	want := macropro.QueryContext[struct{}]{
@@ -127,5 +125,64 @@ func TestResults_ExpandsInsideStringLiterals(t *testing.T) {
 	got := Results(s)[0]
 	if got.Error != "" || got.Output != "SELECT '5m'" {
 		t.Errorf("string literal case = %+v, want SELECT '5m' with no error", got)
+	}
+}
+
+func TestResults_AppendsEngineProbes(t *testing.T) {
+	s := Suite[struct{}]{
+		Macros: macropro.MacroMap[struct{}]{"zeta": staticMacro("Z"), "alpha": staticMacro("A")},
+		Cases:  []Case{{Query: "$__zeta"}},
+	}
+	got := Results(s)
+	want := []Result{
+		{Name: "$__zeta", Query: "$__zeta", Output: "Z"},
+		{Name: "engine: unknown macro passes through", Query: "SELECT $__conformanceUnknown(a, b)", Output: "SELECT $__conformanceUnknown(a, b)"},
+		{Name: "engine: macro inside a line comment", Query: "SELECT 1 -- $__alpha", Output: "SELECT 1 " + strings.Repeat(" ", len("-- $__alpha"))},
+		{Name: "engine: macro inside a block comment", Query: "SELECT /* $__alpha */ 1", Output: "SELECT " + strings.Repeat(" ", len("/* $__alpha */")) + " 1"},
+		{Name: "engine: trailing SQLCommenter tag", Query: "SELECT $__alpha /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/", Output: "SELECT A /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d results, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("result %d = %+v\nwant %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestResults_ProbesUseTheSuitePrefix(t *testing.T) {
+	s := Suite[struct{}]{
+		Macros:  macropro.MacroMap[struct{}]{"foo": staticMacro("F")},
+		Options: []macropro.Option{macropro.WithPrefix("v.")},
+		Prefix:  "v.",
+	}
+	got := Results(s)
+	if got[0].Query != "SELECT v.conformanceUnknown(a, b)" {
+		t.Errorf("unknown probe = %q", got[0].Query)
+	}
+	if got[1].Query != "SELECT 1 -- v.foo" {
+		t.Errorf("line comment probe = %q", got[1].Query)
+	}
+}
+
+func TestResults_ProbesRecordCommentExpansionWhenStrippingIsOff(t *testing.T) {
+	s := Suite[struct{}]{
+		Macros:  macropro.MacroMap[struct{}]{"foo": staticMacro("F")},
+		Options: []macropro.Option{macropro.WithComments(0)},
+	}
+	got := Results(s)
+	if got[1].Output != "SELECT 1 -- F" {
+		t.Errorf("line comment probe with stripping off = %q, want the macro expanded", got[1].Output)
+	}
+}
+
+func TestResults_EmptyMacroMapYieldsOnlyTheUnknownProbe(t *testing.T) {
+	got := Results(Suite[struct{}]{})
+	if len(got) != 1 || got[0].Name != "engine: unknown macro passes through" {
+		t.Fatalf("got %+v, want only the unknown-macro probe", got)
+	}
+	if got[0].Output != got[0].Query {
+		t.Errorf("unknown probe output = %q, want the query unchanged", got[0].Output)
 	}
 }
