@@ -50,6 +50,7 @@ Please do **not** add AI co-author trailers (`Co-Authored-By: Claude`, `Assisted
 2. Ensure `go test -race ./...`, `go vet ./...`, and `golangci-lint run` all pass.
 3. The PR title must follow Conventional Commits (CI enforces this).
 4. Keep changes focused — unrelated cleanups should go in separate PRs.
+5. If the change alters a default macro, the parser, or comment stripping, add a **Fleet compatibility** section to the PR body. The [adoption checklist](README.md#the-pr-body) in the README gives the format.
 
 ## Releases
 
