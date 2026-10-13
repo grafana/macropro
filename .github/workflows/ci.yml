@@ -49,7 +49,7 @@ jobs:
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.go-version }}
           path: coverage.out
@@ -73,7 +73,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.13.2
+          version: v2.14.0
 
   govulncheck:
     name: govulncheck
@@ -94,3 +94,18 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
           govulncheck ./...
+
+  gate:
+    name: Gate
+    needs: [test, lint, govulncheck]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that every required job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          case "$RESULTS" in
+            *failure*|*cancelled*|*skipped*) exit 1 ;;
+          esac
