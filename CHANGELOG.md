@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.1.1](https://github.com/grafana/macropro/compare/v1.1.0...v1.1.1) (2026-11-09)
+
+
+### 📝 Documentation
+
+* add an adoption checklist and fleet compatibility PR section ([#39](https://github.com/grafana/macropro/issues/39)) ([080a8bf](https://github.com/grafana/macropro/commit/080a8bf70501946f43936d4862c432cae3ffc945))
+
+
+### 🤖 Continuous Integration
+
+* add a gate job for required status checks ([#38](https://github.com/grafana/macropro/issues/38)) ([55df1e8](https://github.com/grafana/macropro/commit/55df1e8975038dc59ee78fe367a19d5aaf2512b9))
+
+
+### 🔧 Chores
+
+* **deps:** update actions/upload-artifact action to v7.0.2 ([#41](https://github.com/grafana/macropro/issues/41)) ([5badf1d](https://github.com/grafana/macropro/commit/5badf1dc51e27ea60d62189b51e44b11d07c565a))
+* **deps:** update amannn/action-semantic-pull-request action to v6.1.2 ([#45](https://github.com/grafana/macropro/issues/45)) ([9d9d440](https://github.com/grafana/macropro/commit/9d9d440b70c5aaa9d940d4f28f83ab0c76085f4c))
+* **deps:** update dependency golangci/golangci-lint to v2.14.0 ([#42](https://github.com/grafana/macropro/issues/42)) ([c3541cd](https://github.com/grafana/macropro/commit/c3541cd75c55808e3994a74c5c10dc0dd3d04454))
+
 ## [1.1.0](https://github.com/grafana/macropro/compare/v1.0.2...v1.1.0) (2026-09-24)
 
 
