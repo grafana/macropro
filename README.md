@@ -221,7 +221,7 @@ Inherit a default only when a test in the plugin pins its output. A dependency b
 
 ### Tests
 
-- Write one test case per macro per argument form, with the exact expected output. Include the zero-argument form, a nested argument such as `$__timeFilter(COALESCE(a, b))`, a macro inside a comment, a trailing SQLCommenter tag, and an unknown `$__name`.
+- Write one test case per macro per argument form, with the exact expected output. Include the zero-argument form, a nested argument such as `$__timeFilter(COALESCE(a, b))`, a macro inside a comment, a trailing SQLCommenter tag, and an unknown `$__name`. The [`conformance` package](#conformance) compares the output of these cases with a golden file. It adds the comment, tag, and unknown-macro cases to every suite.
 - Run the existing query tests of the plugin unchanged. A changed expectation is a changed contract and goes into the PR body.
 - Repeat the fleet compatibility check when you bump macropro. A changed default reaches the plugin at the bump, not when the macropro PR merges.
 
@@ -239,6 +239,34 @@ Every adoption PR, and every PR to macropro that changes a default macro, the pa
 - For a macropro PR, one line per adopter that says whether the change reaches it.
 
 [grafana/macropro#31](https://github.com/grafana/macropro/pull/31) and [google-bigquery-datasource#550](https://github.com/grafana/google-bigquery-datasource/pull/550) are the reference examples. The [ClickHouse plugin](https://github.com/grafana/clickhouse-datasource/tree/main/pkg/macros) is the reference implementation of the sqlds path.
+
+## Conformance
+
+The `conformance` package pins the output of every macro a plugin ships. The plugin lists its invocations, the package interpolates them under a fixed context, renders one Markdown table, and compares the bytes with a golden file in the plugin repository. A macropro upgrade that changes an inherited default fails the plugin's test instead of changing a query. The golden file is also the Fleet compatibility table for the PR.
+
+```go
+var update = flag.Bool("update", false, "rewrite golden files")
+
+func TestMacroConformance(t *testing.T) {
+	conformance.Run(t, conformance.Suite[struct{}]{
+		Macros:  ClickHouseMacros,
+		Options: []macropro.Option{macropro.WithComments(clickHouseComments)},
+		Cases: []conformance.Case{
+			{Query: "$__timeFilter(created_at)"},
+			{Query: "$__timeFilter(COALESCE(a, b))"},
+			{Query: "$__interval"},
+		},
+	}, "testdata/macros.md", *update)
+}
+```
+
+Run `go test ./pkg/macros -update` once to write the file, commit it, and run the test without the flag from then on. `Run` compares bytes, so the golden file must keep LF line endings on every platform. Add this line to the repository's `.gitattributes`:
+
+```
+pkg/macros/testdata/*.md text eol=lf
+```
+
+Write one case per macro per argument form. The package appends four engine probes to every suite: an unknown macro, a macro inside a line comment, a macro inside a block comment, and a trailing SQLCommenter tag. `conformance.DefaultContext` never changes, because a change would alter every golden file in the fleet. A suite that passes `WithPrefix` sets `Suite.Prefix` to the same value so the probes use it. The package's own `conformance/testdata/default_macros.md` pins `DefaultMacros`.
 
 ## Default macros
 
