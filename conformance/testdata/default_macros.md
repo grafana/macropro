@@ -40,6 +40,6 @@
 | `$__column()` | `$__column()` | `value` |
 | `full query` | `SELECT $__timeGroup(created_at, $__interval) AS t, avg($__column) FROM $__table WHERE $__timeFilter(created_at) GROUP BY t` | `SELECT FLOOR(UNIX_TIMESTAMP(created_at)/300)*300 AS t, avg(value) FROM metrics WHERE created_at >= '2024-01-01T00:00:00Z' AND created_at <= '2024-01-02T00:00:00Z' GROUP BY t` |
 | `engine: unknown macro passes through` | `SELECT $__conformanceUnknown(a, b)` | `SELECT $__conformanceUnknown(a, b)` |
-| `engine: macro inside a line comment` | `SELECT 1 -- $__column` | ` SELECT 1              ` |
-| `engine: macro inside a block comment` | `SELECT /* $__column */ 1` | `SELECT                 1` |
-| `engine: trailing SQLCommenter tag` | `SELECT $__column /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/` | `SELECT value /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/` |
+| `engine: macro inside a line comment` | `SELECT 1 -- $__conformanceProbe` | ` SELECT 1                        ` |
+| `engine: macro inside a block comment` | `SELECT /* $__conformanceProbe */ 1` | `SELECT                           1` |
+| `engine: trailing SQLCommenter tag` | `SELECT $__conformanceProbe /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/` | `SELECT PROBE /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/` |

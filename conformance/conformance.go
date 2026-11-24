@@ -6,7 +6,6 @@
 package conformance
 
 import (
-	"sort"
 	"time"
 
 	"github.com/grafana/macropro"
@@ -19,11 +18,12 @@ const DefaultPrefix = "$__"
 type Suite[T any] struct {
 	Macros  macropro.MacroMap[T]
 	Options []macropro.Option
-	// Context is the query context for every case. The zero value means
-	// DefaultContext.
+	// Context is the query context for every case. If only Extra is set,
+	// Results uses DefaultContext with that Extra. Unset fields of any other
+	// Context stay zero.
 	Context macropro.QueryContext[T]
-	// Prefix is the WithPrefix value when the suite passes that option.
-	// Empty means DefaultPrefix.
+	// Prefix is the macro prefix for every case and probe. Empty means
+	// DefaultPrefix. It overrides any WithPrefix in Options.
 	Prefix string
 	Cases  []Case
 }
@@ -62,7 +62,10 @@ func DefaultContext[T any]() macropro.QueryContext[T] {
 // Results interpolates every case and then the engine probes, in order.
 func Results[T any](s Suite[T]) []Result {
 	ctx := s.context()
-	cases := append(append([]Case(nil), s.Cases...), probes(s)...)
+	p := s.prefix()
+	macros := macropro.MergeMacros(s.Macros, macropro.MacroMap[T]{probeMacro: probe[T]})
+	opts := append(append([]macropro.Option(nil), s.Options...), macropro.WithPrefix(p))
+	cases := append(append([]Case(nil), s.Cases...), probes(p)...)
 	results := make([]Result, 0, len(cases))
 	for _, c := range cases {
 		name := c.Name
@@ -70,7 +73,7 @@ func Results[T any](s Suite[T]) []Result {
 			name = c.Query
 		}
 		r := Result{Name: name, Query: c.Query}
-		out, err := macropro.Interpolate(c.Query, s.Macros, ctx, s.Options...)
+		out, err := macropro.Interpolate(c.Query, macros, ctx, opts...)
 		if err != nil {
 			r.Error = err.Error()
 		} else {
@@ -99,21 +102,16 @@ func (s Suite[T]) prefix() string {
 	return s.Prefix
 }
 
-func probes[T any](s Suite[T]) []Case {
-	p := s.prefix()
-	out := []Case{{Name: "engine: unknown macro passes through", Query: "SELECT " + p + "conformanceUnknown(a, b)"}}
-	if len(s.Macros) == 0 {
-		return out
+const probeMacro = "conformanceProbe"
+
+func probe[T any](macropro.QueryContext[T], []string) (string, error) { return "PROBE", nil }
+
+func probes(prefix string) []Case {
+	m := prefix + probeMacro
+	return []Case{
+		{Name: "engine: unknown macro passes through", Query: "SELECT " + prefix + "conformanceUnknown(a, b)"},
+		{Name: "engine: macro inside a line comment", Query: "SELECT 1 -- " + m},
+		{Name: "engine: macro inside a block comment", Query: "SELECT /* " + m + " */ 1"},
+		{Name: "engine: trailing SQLCommenter tag", Query: "SELECT " + m + " /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/"},
 	}
-	names := make([]string, 0, len(s.Macros))
-	for name := range s.Macros {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	m := p + names[0]
-	return append(out,
-		Case{Name: "engine: macro inside a line comment", Query: "SELECT 1 -- " + m},
-		Case{Name: "engine: macro inside a block comment", Query: "SELECT /* " + m + " */ 1"},
-		Case{Name: "engine: trailing SQLCommenter tag", Query: "SELECT " + m + " /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/"},
-	)
 }

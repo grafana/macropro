@@ -128,18 +128,26 @@ func TestResults_ExpandsInsideStringLiterals(t *testing.T) {
 	}
 }
 
+const traceTag = "/*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/"
+
 func TestResults_AppendsEngineProbes(t *testing.T) {
+	needsArg := func(_ macropro.QueryContext[struct{}], args []string) (string, error) {
+		if len(args) != 1 {
+			return "", errors.New("needs one argument")
+		}
+		return args[0], nil
+	}
 	s := Suite[struct{}]{
-		Macros: macropro.MacroMap[struct{}]{"zeta": staticMacro("Z"), "alpha": staticMacro("A")},
+		Macros: macropro.MacroMap[struct{}]{"zeta": staticMacro("Z"), "alpha": needsArg},
 		Cases:  []Case{{Query: "$__zeta"}},
 	}
 	got := Results(s)
 	want := []Result{
 		{Name: "$__zeta", Query: "$__zeta", Output: "Z"},
 		{Name: "engine: unknown macro passes through", Query: "SELECT $__conformanceUnknown(a, b)", Output: "SELECT $__conformanceUnknown(a, b)"},
-		{Name: "engine: macro inside a line comment", Query: "SELECT 1 -- $__alpha", Output: "SELECT 1 " + strings.Repeat(" ", len("-- $__alpha"))},
-		{Name: "engine: macro inside a block comment", Query: "SELECT /* $__alpha */ 1", Output: "SELECT " + strings.Repeat(" ", len("/* $__alpha */")) + " 1"},
-		{Name: "engine: trailing SQLCommenter tag", Query: "SELECT $__alpha /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/", Output: "SELECT A /*traceparent='00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01'*/"},
+		{Name: "engine: macro inside a line comment", Query: "SELECT 1 -- $__conformanceProbe", Output: "SELECT 1 " + strings.Repeat(" ", len("-- $__conformanceProbe"))},
+		{Name: "engine: macro inside a block comment", Query: "SELECT /* $__conformanceProbe */ 1", Output: "SELECT " + strings.Repeat(" ", len("/* $__conformanceProbe */")) + " 1"},
+		{Name: "engine: trailing SQLCommenter tag", Query: "SELECT $__conformanceProbe " + traceTag, Output: "SELECT PROBE " + traceTag},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d", len(got), len(want))
@@ -151,18 +159,32 @@ func TestResults_AppendsEngineProbes(t *testing.T) {
 	}
 }
 
-func TestResults_ProbesUseTheSuitePrefix(t *testing.T) {
+func TestResults_PrefixAppliesToCasesAndProbes(t *testing.T) {
+	s := Suite[struct{}]{
+		Macros: macropro.MacroMap[struct{}]{"foo": staticMacro("F")},
+		Prefix: "v.",
+		Cases:  []Case{{Query: "SELECT v.foo"}},
+	}
+	got := Results(s)
+	if got[0].Output != "SELECT F" {
+		t.Errorf("case output = %q, want SELECT F", got[0].Output)
+	}
+	if got[1].Query != "SELECT v.conformanceUnknown(a, b)" {
+		t.Errorf("unknown probe = %q", got[1].Query)
+	}
+	if got[4].Output != "SELECT PROBE "+traceTag {
+		t.Errorf("trailing tag probe output = %q, want the probe macro expanded", got[4].Output)
+	}
+}
+
+func TestResults_PrefixOverridesAWithPrefixOption(t *testing.T) {
 	s := Suite[struct{}]{
 		Macros:  macropro.MacroMap[struct{}]{"foo": staticMacro("F")},
 		Options: []macropro.Option{macropro.WithPrefix("v.")},
-		Prefix:  "v.",
+		Cases:   []Case{{Query: "SELECT $__foo"}},
 	}
-	got := Results(s)
-	if got[0].Query != "SELECT v.conformanceUnknown(a, b)" {
-		t.Errorf("unknown probe = %q", got[0].Query)
-	}
-	if got[1].Query != "SELECT 1 -- v.foo" {
-		t.Errorf("line comment probe = %q", got[1].Query)
+	if got := Results(s)[0].Output; got != "SELECT F" {
+		t.Errorf("case output = %q, want SELECT F", got)
 	}
 }
 
@@ -172,17 +194,17 @@ func TestResults_ProbesRecordCommentExpansionWhenStrippingIsOff(t *testing.T) {
 		Options: []macropro.Option{macropro.WithComments(0)},
 	}
 	got := Results(s)
-	if got[1].Output != "SELECT 1 -- F" {
+	if got[1].Output != "SELECT 1 -- PROBE" {
 		t.Errorf("line comment probe with stripping off = %q, want the macro expanded", got[1].Output)
 	}
 }
 
-func TestResults_EmptyMacroMapYieldsOnlyTheUnknownProbe(t *testing.T) {
+func TestResults_EmptyMacroMapStillRunsEveryProbe(t *testing.T) {
 	got := Results(Suite[struct{}]{})
-	if len(got) != 1 || got[0].Name != "engine: unknown macro passes through" {
-		t.Fatalf("got %+v, want only the unknown-macro probe", got)
+	if len(got) != 4 {
+		t.Fatalf("got %d results, want the 4 engine probes", len(got))
 	}
-	if got[0].Output != got[0].Query {
-		t.Errorf("unknown probe output = %q, want the query unchanged", got[0].Output)
+	if got[3].Output != "SELECT PROBE "+traceTag {
+		t.Errorf("trailing tag probe output = %q, want the probe macro expanded", got[3].Output)
 	}
 }

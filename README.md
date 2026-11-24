@@ -266,7 +266,7 @@ Run `go test ./pkg/macros -update` once to write the file, commit it, and run th
 pkg/macros/testdata/*.md text eol=lf
 ```
 
-Write one case per macro per argument form. The package appends four engine probes to every suite: an unknown macro, a macro inside a line comment, a macro inside a block comment, and a trailing SQLCommenter tag. `conformance.DefaultContext` never changes, because a change would alter every golden file in the fleet. A suite that passes `WithPrefix` sets `Suite.Prefix` to the same value so the probes use it. The package's own `conformance/testdata/default_macros.md` pins `DefaultMacros`.
+Write one case per macro per argument form. The package appends four engine probes to every suite: an unknown macro, a macro inside a line comment, a macro inside a block comment, and a trailing SQLCommenter tag. The probes use the package's own `conformanceProbe` macro, so a change to the plugin's macros does not change the probe rows. `conformance.DefaultContext` never changes, because a change would alter every golden file in the fleet. Set the macro prefix with `Suite.Prefix`, not with `WithPrefix`. `Suite.Prefix` applies to every case and probe, and it overrides a `WithPrefix` in `Suite.Options`. The package's own `conformance/testdata/default_macros.md` pins `DefaultMacros`.
 
 ## Default macros
 
