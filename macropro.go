@@ -94,9 +94,9 @@ func StripComments(query string, style CommentStyle) string {
 		switch {
 		case c == '\'' || c == '"':
 			// Single- or double-quoted literal (handles '' and "" escapes,
-			// plus backslash escapes when BackslashEscape is set).
+			// plus backslash escapes when selected for this literal).
 			var j int
-			if style&BackslashEscape != 0 {
+			if style&BackslashEscape != 0 || (style&EscapeString != 0 && isEscapeString(query, i)) {
 				j = scanStringLiteralBackslash(query, i)
 			} else {
 				j = scanStringLiteral(query, i)
@@ -157,6 +157,20 @@ func StripComments(query string, style CommentStyle) string {
 		}
 	}
 	return b.String()
+}
+
+// isEscapeString reports whether the quote at pos opens a PostgreSQL escape
+// string. The E prefix must be a separate token, not the end of an identifier.
+func isEscapeString(s string, pos int) bool {
+	if s[pos] != '\'' || pos == 0 || (s[pos-1] != 'E' && s[pos-1] != 'e') {
+		return false
+	}
+	if pos == 1 {
+		return true
+	}
+	previous := s[pos-2]
+	// PostgreSQL identifiers also allow dollar signs and non-ASCII bytes.
+	return !isNameChar(previous) && previous != '$' && previous < 0x80
 }
 
 // parseDollarQuote detects a PostgreSQL dollar-quoted string starting at pos

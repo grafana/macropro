@@ -85,6 +85,10 @@ const (
 	//
 	// Implies [BlockComment], so it can be set on its own.
 	NestedBlockComment
+	// EscapeString preserves PostgreSQL E'…' and e'…' escape strings,
+	// recognising backslash escapes only in these prefixed strings. Regular
+	// strings and quoted identifiers retain SQL-standard quote handling.
+	EscapeString
 )
 
 // blockCommentStyles is the set of flags that enable /* … */ stripping.

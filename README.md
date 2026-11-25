@@ -314,6 +314,7 @@ Available `CommentStyle` flags:
 | `DollarQuote` | Preserves PostgreSQL `$tag$…$tag$` dollar-quoted strings |
 | `BacktickQuote` | Preserves MySQL `` `col name` `` backtick identifiers (with `` `` `` escape) |
 | `BracketQuote` | Preserves T-SQL `[col name]` bracket identifiers (with `]]` escape) |
+| `EscapeString` | Preserves PostgreSQL `E'…'` / `e'…'` strings with backslash escapes, while regular strings keep standard quoting |
 | `BackslashEscape` | Treats `\x` as a two-byte escape inside `'…'` and `"…"` — required for MySQL with `NO_BACKSLASH_ESCAPES=OFF` (the default) |
 
 Flags can be combined with `\|`. Pass `0` to strip nothing.
@@ -325,7 +326,7 @@ Dialect recipes:
 | Dialect | Style |
 |---|---|
 | Generic SQL (default) | `LineComment \| BlockComment` |
-| PostgreSQL | `LineComment \| NestedBlockComment \| DollarQuote` |
+| PostgreSQL | `LineComment \| NestedBlockComment \| DollarQuote \| EscapeString` |
 | MySQL | `LineComment \| BlockComment \| HashComment \| BacktickQuote \| BackslashEscape` |
 | MSSQL / T-SQL | `LineComment \| NestedBlockComment \| BracketQuote` |
 | InfluxDB Flux | `SlashComment \| BlockComment` |

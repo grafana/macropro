@@ -73,6 +73,7 @@ func FuzzStripComments(f *testing.F) {
 		{"/* '/*' */", uint(NestedBlockComment)},
 		{"SELECT [a /* b] -- c", uint(LineComment | NestedBlockComment | BracketQuote)},
 		{"SELECT $$ /* $$ --", uint(LineComment | NestedBlockComment | DollarQuote)},
+		{`SELECT E'it\'s -- x' /* note */`, uint(LineComment | NestedBlockComment | EscapeString)},
 		{"SELECT `a /*` # b", uint(HashComment | NestedBlockComment | BacktickQuote)},
 	}
 	for _, s := range seeds {

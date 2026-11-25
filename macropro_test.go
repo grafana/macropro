@@ -478,3 +478,55 @@ func TestStripComments_dialectCases(t *testing.T) {
 		}
 	})
 }
+
+func TestStripComments_escapeString(t *testing.T) {
+	style := LineComment | NestedBlockComment | DollarQuote | EscapeString
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"line marker", `SELECT E'it\'s -- x' AS a`, `SELECT E'it\'s -- x' AS a`},
+		{"block marker", `SELECT e'it\'s /* x */' AS a`, `SELECT e'it\'s /* x */' AS a`},
+		{"start of input", `E'it\'s -- x'`, `E'it\'s -- x'`},
+		{"after punctuation", `SELECT(E'it\'s -- x')`, `SELECT(E'it\'s -- x')`},
+		{"doubled quote", `SELECT E'it''s -- x'`, `SELECT E'it''s -- x'`},
+		{"escaped backslash", `SELECT E'C:\\' -- note`, `SELECT E'C:\\' ` + strings.Repeat(" ", len("-- note"))},
+		{"trailing comment", `SELECT E'it\'s -- x' -- note`, `SELECT E'it\'s -- x' ` + strings.Repeat(" ", len("-- note"))},
+		{"standard string", `SELECT 'C:\' AS p -- note`, `SELECT 'C:\' AS p ` + strings.Repeat(" ", len("-- note"))},
+		{"quoted identifier", `SELECT "E\" -- note`, `SELECT "E\" ` + strings.Repeat(" ", len("-- note"))},
+		{"identifier suffix", `SELECT nameE'C:\' -- note`, `SELECT nameE'C:\' ` + strings.Repeat(" ", len("-- note"))},
+		{"dollar suffix", `SELECT name$E'C:\' -- note`, `SELECT name$E'C:\' ` + strings.Repeat(" ", len("-- note"))},
+		{"unicode suffix", `SELECT éE'C:\' -- note`, `SELECT éE'C:\' ` + strings.Repeat(" ", len("-- note"))},
+		{"space after prefix", `SELECT E 'C:\' -- note`, `SELECT E 'C:\' ` + strings.Repeat(" ", len("-- note"))},
+		{"unterminated string", `SELECT E'it\'s -- x`, `SELECT E'it\'s -- x`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StripComments(tc.input, style); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStripComments_escapeStringIsOptIn(t *testing.T) {
+	query := `SELECT E'it\'s -- x' AS a`
+	want := blankRange(query, strings.Index(query, "--"), len(query))
+	if got := StripComments(query, LineComment|BlockComment); got != want {
+		t.Errorf("got %q, want legacy output %q", got, want)
+	}
+}
+
+func TestInterpolate_escapeString(t *testing.T) {
+	query := `SELECT E'it\'s -- x', $__interval_ms -- $__interval_ms`
+	got, err := Interpolate(query, DefaultMacros[struct{}](), testCtx,
+		WithComments(LineComment|NestedBlockComment|DollarQuote|EscapeString))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `SELECT E'it\'s -- x', 300000 ` + strings.Repeat(" ", len("-- $__interval_ms"))
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
