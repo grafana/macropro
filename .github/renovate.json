@@ -11,7 +11,9 @@
     "before 6am on Monday"
   ],
   "timezone": "Etc/UTC",
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "packageRules": [
     {
       "description": "Minimum release age (3 days) for non-internal Go modules and GitHub Actions to guard against compromised releases.",
